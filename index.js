@@ -6,13 +6,15 @@ import {
 } from '../../../../script.js';
 import { extension_settings } from '../../../extensions.js';
 import { sendExpressionCall } from '../../expressions/index.js';
+import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
+import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
+import { ARGUMENT_TYPE, SlashCommandArgument } from '../../../slash-commands/SlashCommandArgument.js';
 
 import {
     getSettings,
     updateSetting,
     listConnectionProfiles,
     resetPrompt,
-    DEFAULT_PROMPT,
 } from './settings.js';
 import { classifyExpression } from './classifier.js';
 import {
@@ -20,6 +22,7 @@ import {
     getSpriteFolderName,
     clearSpriteCache,
 } from './sprites.js';
+import { setLastExpression, getLastExpression } from './wrappers.js';
 import { isSidecarConfigured, isSidecarKeyAvailable } from './llm-sidecar.js';
 
 const MODULE = 'Expression Router';
@@ -27,7 +30,7 @@ const MODULE = 'Expression Router';
 let panel = null;
 let _classifying = false;
 
-// ─── Classifier suppression (optional) ───────────────────────────
+// ─── Classifier suppression ──────────────────────────────────────
 
 function suppressClassifier() {
     const settings = getSettings();
@@ -40,7 +43,7 @@ function suppressClassifier() {
         };
         saveSettingsDebounced();
     }
-    extension_settings.expressions.api = 99; // none
+    extension_settings.expressions.api = 99;
 }
 
 function restoreClassifier() {
@@ -59,21 +62,25 @@ async function applyExpression(expression) {
 
     try {
         await sendExpressionCall(folder, expression, { force: true });
-        // Keep ST's fallback in sync so moduleWorker doesn't overwrite
         if (extension_settings.expressions) {
             extension_settings.expressions.fallback_expression = expression;
         }
+        setLastExpression(expression);
     } catch (e) {
         console.error(`[${MODULE}] applyExpression failed:`, e);
         throw e;
     }
 }
 
-// ─── Main classification hook ────────────────────────────────────
+// ─── Classification ──────────────────────────────────────────────
 
-async function onMessageReceived() {
+async function runClassification({ silent = false } = {}) {
     const settings = getSettings();
-    if (!settings.enabled || _classifying) return;
+    if (!settings.enabled) {
+        if (!silent) toastr.warning('Expression Router is disabled.', MODULE);
+        return null;
+    }
+    if (_classifying) return null;
 
     _classifying = true;
     try {
@@ -81,12 +88,98 @@ async function onMessageReceived() {
         if (expression) {
             await applyExpression(expression);
             setStatus(`Selected: ${expression}`, 'ok');
+            return expression;
         }
+        if (!silent) {
+            toastr.warning('No valid expression returned.', MODULE);
+            setStatus('No valid expression', 'error');
+        }
+        return null;
     } catch (e) {
-        setStatus(e.message || 'Classification failed', 'error');
-        showOutput(String(e.message || e));
+        const msg = e?.message || String(e);
+        setStatus(msg, 'error');
+        showOutput(msg);
+        if (!silent) {
+            toastr.error(msg, MODULE);
+        } else {
+            console.error(`[${MODULE}]`, msg);
+        }
+        return null;
     } finally {
         _classifying = false;
+    }
+}
+
+async function onMessageReceived() {
+    await runClassification({ silent: true });
+}
+
+// ─── Slash commands ──────────────────────────────────────────────
+
+function registerSlashCommands() {
+    try {
+        // /er reload  |  /expression-router reload
+        SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+            name: 'er',
+            aliases: ['expression-router', 'Expression-Router'],
+            callback: async (args, value) => {
+                const action = String(value || args?.action || '').trim().toLowerCase();
+
+                if (action === 'reload' || action === 'classify' || action === 'run') {
+                    const expr = await runClassification({ silent: false });
+                    return expr || '';
+                }
+
+                if (action === 'labels' || action === 'list') {
+                    const labels = await getAvailableLabels(true);
+                    if (!labels.length) {
+                        toastr.warning('No labels found for current character.', MODULE);
+                        return '';
+                    }
+                    const text = labels.join(', ');
+                    toastr.info(`Labels (${labels.length}): ${text}`, MODULE, { timeOut: 8000 });
+                    console.log(`[${MODULE}] Labels:`, labels);
+                    return text;
+                }
+
+                if (action === 'current' || action === 'show') {
+                    const expr = getLastExpression();
+                    if (expr) {
+                        toastr.info(`Current expression: ${expr}`, MODULE);
+                        return expr;
+                    }
+                    toastr.info('No expression classified yet.', MODULE);
+                    return '';
+                }
+
+                // help
+                toastr.info(
+                    'Usage: /er reload | /er labels | /er current',
+                    MODULE,
+                    { timeOut: 6000 },
+                );
+                return '';
+            },
+            unnamedArgumentList: [
+                SlashCommandArgument.fromProps({
+                    description: 'Action: reload | labels | current',
+                    typeList: [ARGUMENT_TYPE.STRING],
+                    isRequired: false,
+                }),
+            ],
+            helpString: `
+                <div>
+                    <b>Expression Router</b> commands:<br>
+                    <code>/er reload</code> — reclassify expression now<br>
+                    <code>/er labels</code> — list available labels<br>
+                    <code>/er current</code> — show last classified expression
+                </div>
+            `,
+        }));
+
+        console.log(`[${MODULE}] Slash commands registered (/er, /expression-router).`);
+    } catch (e) {
+        console.error(`[${MODULE}] Failed to register slash commands:`, e);
     }
 }
 
@@ -103,66 +196,101 @@ function escapeHtml(text) {
 
 function createUI() {
     const settings = getSettings();
+    const collapsed = !!settings.uiCollapsed;
+    const hidePrompt = !!settings.hidePrompt;
 
     const html = `
 <div class="er_block">
-    <div class="er_header">
-        <i class="fa-solid fa-masks-theater"></i>
-        <span>Expression Router</span>
-        <span class="er_version">v1.0</span>
+    <div class="er_header" id="er_header_toggle" title="Click to collapse/expand">
+        <div class="er_header_icon"><i class="fa-solid fa-masks-theater"></i></div>
+        <div class="er_header_text">
+            <span class="er_header_title">Expression Router</span>
+            <span class="er_header_sub">Sidecar expression classifier</span>
+        </div>
+        <span class="er_badge">v1.1</span>
+        <i class="fa-solid fa-chevron-down er_chevron ${collapsed ? '' : 'expanded'}"></i>
     </div>
 
-    <div class="er_row">
-        <label class="er_toggle">
-            <input id="er_enabled" type="checkbox" ${settings.enabled ? 'checked' : ''}>
-            <span>Enabled</span>
-        </label>
+    <div class="er_body" style="${collapsed ? 'display:none' : ''}">
+
+        <div class="er_card">
+            <div class="er_row">
+                <label class="er_toggle">
+                    <input id="er_enabled" type="checkbox" ${settings.enabled ? 'checked' : ''}>
+                    <span class="er_toggle_slider"></span>
+                    <span>Enabled</span>
+                </label>
+            </div>
+
+            <div class="er_row">
+                <label class="er_field_label">Connection Profile</label>
+                <select id="er_profile" class="er_select"></select>
+            </div>
+
+            <div class="er_row_grid">
+                <div class="er_field">
+                    <label class="er_field_label">History</label>
+                    <input id="er_history" class="er_input" type="number" min="0" max="50" value="${settings.historyCount}">
+                </div>
+                <div class="er_field">
+                    <label class="er_field_label">Temperature</label>
+                    <input id="er_temp" class="er_input" type="number" min="0" max="2" step="0.05" value="${settings.temperature}">
+                </div>
+                <div class="er_field">
+                    <label class="er_field_label">Max tokens</label>
+                    <input id="er_maxtokens" class="er_input" type="number" min="8" max="256" value="${settings.maxTokens}">
+                </div>
+            </div>
+
+            <div class="er_row">
+                <label class="er_toggle">
+                    <input id="er_suppress" type="checkbox" ${settings.suppressClassifier ? 'checked' : ''}>
+                    <span class="er_toggle_slider"></span>
+                    <span>Suppress ST classifier</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="er_card">
+            <div class="er_card_header">
+                <span>Prompt</span>
+                <label class="er_toggle er_toggle_sm">
+                    <input id="er_hide_prompt" type="checkbox" ${hidePrompt ? 'checked' : ''}>
+                    <span class="er_toggle_slider"></span>
+                    <span>Hide</span>
+                </label>
+            </div>
+            <div id="er_prompt_wrap" style="${hidePrompt ? 'display:none' : ''}">
+                <div class="er_hint">
+                    Wrappers: <code>{{labels}}</code> <code>{{labels_inline}}</code> <code>{{history}}</code>
+                    <code>{{history:N}}</code> <code>{{last_char}}</code> <code>{{last_user}}</code>
+                    <code>{{last_message}}</code> <code>{{expression}}</code> <code>{{char}}</code> <code>{{user}}</code>
+                </div>
+                <textarea id="er_prompt" class="er_prompt" rows="10">${escapeHtml(settings.prompt)}</textarea>
+            </div>
+        </div>
+
+        <div class="er_btn_row">
+            <button id="er_test" class="er_btn er_btn_primary"><i class="fa-solid fa-play"></i> Test</button>
+            <button id="er_reload" class="er_btn"><i class="fa-solid fa-rotate"></i> Reload</button>
+            <button id="er_labels_btn" class="er_btn"><i class="fa-solid fa-tags"></i> Labels</button>
+            <button id="er_reset_prompt" class="er_btn"><i class="fa-solid fa-undo"></i> Reset prompt</button>
+            <button id="er_refresh_labels" class="er_btn"><i class="fa-solid fa-arrows-rotate"></i></button>
+        </div>
+
+        <div class="er_debug">
+            <label class="er_check"><input id="er_debug_prompt" type="checkbox" ${settings.debugPrompt ? 'checked' : ''}> Log prompt</label>
+            <label class="er_check"><input id="er_debug_response" type="checkbox" ${settings.debugResponse ? 'checked' : ''}> Log response</label>
+        </div>
+
+        <div id="er_status" class="er_status waiting">Ready</div>
+        <div id="er_output" class="er_output er_hidden"></div>
+        <div id="er_labels_preview" class="er_labels_preview"></div>
+
+        <div class="er_hint er_commands_hint">
+            Commands: <code>/er reload</code> · <code>/er labels</code> · <code>/er current</code>
+        </div>
     </div>
-
-    <div class="er_row">
-        <label>Connection Profile</label>
-        <select id="er_profile"></select>
-    </div>
-
-    <div class="er_row">
-        <label>History messages</label>
-        <input id="er_history" type="number" min="0" max="50" value="${settings.historyCount}">
-    </div>
-
-    <div class="er_row">
-        <label>Temperature</label>
-        <input id="er_temp" type="number" min="0" max="2" step="0.05" value="${settings.temperature}">
-    </div>
-
-    <div class="er_row">
-        <label>Max tokens</label>
-        <input id="er_maxtokens" type="number" min="8" max="256" value="${settings.maxTokens}">
-    </div>
-
-    <div class="er_row">
-        <label class="er_toggle">
-            <input id="er_suppress" type="checkbox" ${settings.suppressClassifier ? 'checked' : ''}>
-            <span>Suppress ST built-in classifier</span>
-        </label>
-    </div>
-
-    <label class="er_label">Prompt <span class="er_hint">(wrappers: {{labels}} {{history}} {{history:N}} {{last_char}} {{last_user}} {{last_message}} {{char}} {{user}})</span></label>
-    <textarea id="er_prompt" class="er_prompt" rows="12">${escapeHtml(settings.prompt)}</textarea>
-
-    <div class="er_btn_row">
-        <button id="er_reset_prompt" class="menu_button">Reset prompt</button>
-        <button id="er_test" class="menu_button">Test classification</button>
-        <button id="er_refresh_labels" class="menu_button">Refresh labels</button>
-    </div>
-
-    <div class="er_debug">
-        <label><input id="er_debug_prompt" type="checkbox" ${settings.debugPrompt ? 'checked' : ''}> Log prompt</label>
-        <label><input id="er_debug_response" type="checkbox" ${settings.debugResponse ? 'checked' : ''}> Log response</label>
-    </div>
-
-    <div id="er_status" class="er_status waiting">Ready</div>
-    <div id="er_output" class="er_output er_hidden"></div>
-    <div id="er_labels_preview" class="er_labels_preview"></div>
 </div>
 `;
 
@@ -174,6 +302,16 @@ function createUI() {
 }
 
 function bindEvents() {
+    // Collapse header
+    panel.find('#er_header_toggle').on('click', function () {
+        const body = panel.find('.er_body');
+        const chevron = panel.find('.er_chevron');
+        const isHidden = body.is(':hidden');
+        body.slideToggle(180);
+        chevron.toggleClass('expanded', isHidden);
+        updateSetting('uiCollapsed', !isHidden);
+    });
+
     panel.find('#er_enabled').on('change', function () {
         updateSetting('enabled', this.checked);
         if (this.checked) {
@@ -187,7 +325,12 @@ function bindEvents() {
 
     panel.find('#er_profile').on('change', function () {
         updateSetting('connectionProfile', this.value);
-        setStatus(this.value ? 'Profile selected' : 'No profile', this.value ? 'ok' : 'error');
+        if (this.value) {
+            setStatus('Profile selected', 'ok');
+        } else {
+            setStatus('No profile', 'error');
+            toastr.warning('Select a Connection Profile', MODULE);
+        }
     });
 
     panel.find('#er_history').on('change', function () {
@@ -216,6 +359,11 @@ function bindEvents() {
         }
     });
 
+    panel.find('#er_hide_prompt').on('change', function () {
+        updateSetting('hidePrompt', this.checked);
+        panel.find('#er_prompt_wrap').slideToggle(150);
+    });
+
     panel.find('#er_prompt').on('input', function () {
         updateSetting('prompt', this.value);
     });
@@ -231,7 +379,8 @@ function bindEvents() {
     panel.find('#er_reset_prompt').on('click', () => {
         const p = resetPrompt();
         panel.find('#er_prompt').val(p);
-        setStatus('Prompt reset to default', 'ok');
+        setStatus('Prompt reset', 'ok');
+        toastr.info('Prompt reset to default', MODULE);
     });
 
     panel.find('#er_refresh_labels').on('click', async () => {
@@ -239,60 +388,68 @@ function bindEvents() {
         await getAvailableLabels(true);
         refreshLabelsPreview();
         setStatus('Labels refreshed', 'ok');
+        toastr.success('Labels refreshed', MODULE);
     });
 
-    panel.find('#er_test').on('click', async () => {
+    panel.find('#er_labels_btn').on('click', async () => {
+        const labels = await getAvailableLabels(true);
+        if (!labels.length) {
+            toastr.warning('No labels found.', MODULE);
+            return;
+        }
+        showOutput(labels.join('\n'));
+        toastr.info(`Labels (${labels.length}): ${labels.join(', ')}`, MODULE, { timeOut: 7000 });
+    });
+
+    panel.find('#er_test, #er_reload').on('click', async () => {
         setStatus('Classifying...', 'waiting');
         showOutput('');
         try {
             if (!isSidecarConfigured()) {
-                throw new Error('Select a valid Connection Profile first (API + model).');
+                throw new Error('Select a valid Connection Profile (API + model).');
             }
             if (!isSidecarKeyAvailable()) {
                 throw new Error('API key access denied. Enable allowKeysExposure in config.yaml.');
             }
-
-            const expression = await classifyExpression();
+            const expression = await runClassification({ silent: false });
             showOutput(expression || '(no valid expression)');
-            setStatus(
-                expression ? `Selected: ${expression}` : 'No valid expression returned',
-                expression ? 'ok' : 'error',
-            );
-
             if (expression) {
-                await applyExpression(expression);
+                toastr.success(`Selected: ${expression}`, MODULE);
             }
         } catch (e) {
-            showOutput(String(e.message || e));
-            setStatus(e.message || 'Error', 'error');
+            const msg = e?.message || String(e);
+            showOutput(msg);
+            setStatus(msg, 'error');
+            toastr.error(msg, MODULE);
         }
     });
 }
 
 function refreshProfiles() {
+    if (!panel?.length) return;
     const select = panel.find('#er_profile');
+    const current = getSettings().connectionProfile || '';
     select.empty();
     select.append($('<option>').val('').text('— select profile —'));
-
     for (const p of listConnectionProfiles()) {
         select.append($('<option>').val(p.id).text(p.name));
     }
-
-    select.val(getSettings().connectionProfile || '');
+    select.val(current);
 }
 
 async function refreshLabelsPreview() {
+    if (!panel?.length) return;
     const labels = await getAvailableLabels(true);
     const box = panel.find('#er_labels_preview');
     if (!labels.length) {
         box.text('No sprites found for current character.');
     } else {
-        box.text(`Labels (${labels.length}): ${labels.join(', ')}`);
+        box.html(`<b>${labels.length} labels:</b> ${escapeHtml(labels.join(', '))}`);
     }
 }
 
 function setStatus(text, type) {
-    if (!panel) return;
+    if (!panel?.length) return;
     panel.find('#er_status')
         .removeClass('ok error waiting')
         .addClass(type)
@@ -300,7 +457,7 @@ function setStatus(text, type) {
 }
 
 function showOutput(text) {
-    if (!panel) return;
+    if (!panel?.length) return;
     const out = panel.find('#er_output');
     if (!text) {
         out.addClass('er_hidden').text('');
@@ -312,8 +469,13 @@ function showOutput(text) {
 // ─── Init ────────────────────────────────────────────────────────
 
 jQuery(async () => {
-    getSettings();
+    // ensure new settings keys exist
+    const s = getSettings();
+    if (s.uiCollapsed === undefined) s.uiCollapsed = false;
+    if (s.hidePrompt === undefined) s.hidePrompt = false;
+
     createUI();
+    registerSlashCommands();
 
     if (getSettings().enabled) {
         suppressClassifier();
@@ -323,6 +485,7 @@ jQuery(async () => {
 
     eventSource.on(event_types.CHAT_CHANGED, async () => {
         clearSpriteCache();
+        setLastExpression('');
         await getAvailableLabels(true);
         refreshLabelsPreview();
         refreshProfiles();
@@ -332,10 +495,9 @@ jQuery(async () => {
         await getAvailableLabels(true);
     });
 
-    // Re-populate profiles if Connection Manager changes (best-effort)
     setInterval(() => {
         if (panel?.length) refreshProfiles();
-    }, 15000);
+    }, 20000);
 
     console.log(`[${MODULE}] loaded.`);
 });

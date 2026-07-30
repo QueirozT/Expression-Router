@@ -1,6 +1,7 @@
 // classifier.js
 import { getSettings, findConnectionProfile } from './settings.js';
 import { getAvailableLabels, hasLabel, normalizeLabel } from './sprites.js';
+import { setLastExpression } from './wrappers.js';
 import { expandWrappers } from './wrappers.js';
 import { sidecarGenerate, isSidecarConfigured } from './llm-sidecar.js';
 
@@ -41,10 +42,16 @@ export async function classifyExpression() {
     const parsed = parseResponse(raw);
     if (!parsed) return null;
 
-    if (hasLabel(parsed)) return parsed;
+    if (hasLabel(parsed)) {
+        setLastExpression(parsed);
+        return parsed;
+    }
 
     const normalized = normalizeLabel(parsed);
-    if (normalized) return normalized;
+    if (normalized) {
+        setLastExpression(normalized);
+        return normalized;
+    }
 
     console.warn('[Expression Router] Invalid expression (not in labels):', parsed);
     return null;

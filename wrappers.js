@@ -5,6 +5,7 @@ import { getSettings } from './settings.js';
 const WRAPPER_RE = /\{\{\s*([a-zA-Z0-9_]+)(?::(\d+))?\s*\}\}/g;
 
 let currentLabels = [];
+let lastExpression = '';
 
 export function setLabels(labels) {
     currentLabels = [...(labels || [])];
@@ -12,6 +13,14 @@ export function setLabels(labels) {
 
 export function getLabels() {
     return currentLabels.join('\n');
+}
+
+export function setLastExpression(expr) {
+    lastExpression = expr || '';
+}
+
+export function getLastExpression() {
+    return lastExpression;
 }
 
 export async function expandWrappers(prompt) {
@@ -25,6 +34,12 @@ function resolveWrapper(name, value, context) {
     switch (name) {
         case 'labels':
             return getLabels();
+
+        case 'labels_inline':
+            return currentLabels.join(', ');
+
+        case 'expression':
+            return lastExpression || '';
 
         case 'last_char':
             return getLastCharacterMessage(context);
@@ -79,7 +94,9 @@ function getHistory(context, amount) {
 
     return history
         .map(m => {
-            const role = m.is_user ? (context.name1 || 'User') : (m.name || context.name2 || 'Character');
+            const role = m.is_user
+                ? (context.name1 || 'User')
+                : (m.name || context.name2 || 'Character');
             return `${role}: ${m.mes}`;
         })
         .join('\n\n');

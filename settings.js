@@ -24,6 +24,8 @@ const DEFAULT_SETTINGS = {
     debugPrompt: false,
     debugResponse: false,
     suppressClassifier: true,
+    uiCollapsed: false,
+    hidePrompt: false,
 };
 
 export function getSettings() {
