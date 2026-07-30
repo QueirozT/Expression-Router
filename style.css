@@ -1,0 +1,138 @@
+.er_block {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 10px 0;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    background: var(--black50a, rgba(0,0,0,0.2));
+}
+
+.er_header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+
+.er_header i {
+    color: #7c9cff;
+}
+
+.er_version {
+    margin-left: auto;
+    font-size: 11px;
+    opacity: 0.6;
+}
+
+.er_row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.er_row label {
+    min-width: 140px;
+    font-size: 13px;
+}
+
+.er_row select,
+.er_row input[type="number"] {
+    flex: 1;
+    max-width: 220px;
+}
+
+.er_toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    min-width: auto !important;
+}
+
+.er_label {
+    font-size: 13px;
+    margin-top: 4px;
+}
+
+.er_hint {
+    font-size: 11px;
+    opacity: 0.6;
+    font-weight: normal;
+}
+
+.er_prompt {
+    width: 100%;
+    min-height: 200px;
+    resize: vertical;
+    font-family: var(--monoFontFamily, monospace);
+    font-size: 0.85rem;
+    box-sizing: border-box;
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    background: var(--black30a, rgba(0,0,0,0.15));
+    color: inherit;
+}
+
+.er_btn_row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.er_debug {
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+    opacity: 0.85;
+}
+
+.er_status {
+    margin-top: 4px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--SmartThemeBlurTintColor, rgba(0,0,0,0.2));
+    font-size: 0.85rem;
+    word-break: break-word;
+}
+
+.er_status.ok {
+    border-left: 3px solid #43a047;
+}
+
+.er_status.error {
+    border-left: 3px solid #e53935;
+}
+
+.er_status.waiting {
+    border-left: 3px solid #fb8c00;
+}
+
+.er_output {
+    margin-top: 4px;
+    padding: 8px;
+    border-radius: 6px;
+    background: rgba(0,0,0,0.2);
+    font-family: var(--monoFontFamily, monospace);
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.er_labels_preview {
+    font-size: 11px;
+    opacity: 0.7;
+    word-break: break-word;
+    max-height: 80px;
+    overflow-y: auto;
+}
+
+.er_hidden {
+    display: none !important;
+}

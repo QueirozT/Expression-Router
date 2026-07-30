@@ -1,0 +1,11 @@
+{
+    "display_name": "Expression Router",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "QueirozT",
+    "version": "1.0.0",
+    "description": "LLM-based sprite classifier using Connection Profiles and a fully customizable prompt."
+}
