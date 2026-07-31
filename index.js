@@ -9,6 +9,7 @@ import { sendExpressionCall } from '../../expressions/index.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
 import { getContext } from '../../../st-context.js';
+import { saveMetadataDebounced } from '../../../../script.js';
 import { ARGUMENT_TYPE, SlashCommandArgument } from '../../../slash-commands/SlashCommandArgument.js';
 
 import {
@@ -32,6 +33,31 @@ let panel = null;
 let _classifying = false;
 
 // ─── Classifier suppression ──────────────────────────────────────
+
+function getChatExpressionMeta() {
+    const ctx = getContext();
+    const meta = ctx.chatMetadata || ctx.chat_metadata || {};
+    return meta.expression_router || null;
+}
+
+function setChatExpressionMeta(expression) {
+    const ctx = getContext();
+    const meta = ctx.chatMetadata || ctx.chat_metadata;
+    if (!meta) return;
+    meta.expression_router = {
+        expression: expression || '',
+        updatedAt: Date.now(),
+    };
+    try {
+        if (typeof saveMetadataDebounced === 'function') {
+            saveMetadataDebounced();
+        } else if (typeof ctx.saveMetadata === 'function') {
+            ctx.saveMetadata();
+        }
+    } catch (e) {
+        console.warn(`[${MODULE}] Could not save chat metadata:`, e);
+    }
+}
 
 function suppressClassifier() {
     const settings = getSettings();
@@ -67,6 +93,7 @@ async function applyExpression(expression) {
             extension_settings.expressions.fallback_expression = expression;
         }
         setLastExpression(expression);
+        setChatExpressionMeta(expression);
     } catch (e) {
         console.error(`[${MODULE}] applyExpression failed:`, e);
         throw e;
@@ -81,6 +108,12 @@ async function runClassification({ silent = false } = {}) {
         if (!silent) toastr.warning('Expression Router is disabled.', MODULE);
         return null;
     }
+    
+    const ctx = getContext();
+    if (!ctx?.name2 || ctx.characterId === undefined || ctx.characterId === null) {
+        return null;
+    }
+    
     if (_classifying) return null;
 
     _classifying = true;
@@ -226,7 +259,7 @@ function createUI() {
             <span class="er_header_title">Expression Router</span>
             <span class="er_header_sub">Sidecar expression classifier</span>
         </div>
-        <span class="er_badge">v1.1</span>
+        <span class="er_badge">v1.3</span>
         <i class="fa-solid fa-chevron-down er_chevron ${collapsed ? '' : 'expanded'}"></i>
     </div>
 
@@ -555,10 +588,31 @@ jQuery(async () => {
         refreshProfiles();
         updateControlsState();
 
-        // Classify current scene on chat open (same path as MESSAGE_RECEIVED)
-        const settings = getSettings();
-        if (settings.enabled && isSidecarConfigured()) {
-            await runClassification({ silent: true });
+        // No character / chat closed → do nothing
+        const ctx = getContext();
+        if (!ctx?.name2 || ctx.characterId === undefined || ctx.characterId === null) {
+            return;
+        }
+
+        // Restore last expression saved for this chat
+        const saved = getChatExpressionMeta()?.expression;
+        if (saved) {
+            try {
+                await applyExpression(saved);
+                setStatus(`Restored: ${saved}`, 'ok');
+                return;
+            } catch (e) {
+                console.warn(`[${MODULE}] Restore failed:`, e);
+            }
+        }
+
+        // No saved expression: optional fallback only (no LLM call on open)
+        const fallback = getSettings().fallbackExpression;
+        if (fallback) {
+            try {
+                await applyExpression(fallback);
+                setStatus(`Fallback: ${fallback}`, 'waiting');
+            } catch { /* ignore */ }
         }
     });
 
