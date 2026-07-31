@@ -121,19 +121,42 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
             if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
             messages.push({ role: 'user', content: prompt });
 
-            const result = await CMRS.sendRequest(
-                profileId,
-                messages,
-                settings.maxTokens || 64,
-                {},
-                // overridePayload — forwarded to the backend when supported
-                {
+            // Só desliga reasoning em providers OpenAI-compatible que suportam
+            // (ex.: Custom → Cerebras). Mistral nativo rejeita esses campos.
+            const profile = findConnectionProfile(profileId);
+            const api = String(profile?.api || '').toLowerCase();
+            const disableReasoningApis = new Set([
+                'custom',
+                'chutes',
+                'electronhub',
+                'nanogpt',
+                // adicione outros custom/proxy se precisar
+            ]);
+
+            const overridePayload = disableReasoningApis.has(api)
+                ? {
                     reasoning_effort: 'none',
-                },
-            );
-            
+                    disable_reasoning: true,
+                }
+                : undefined;
+
+            const result = overridePayload
+                ? await CMRS.sendRequest(
+                    profileId,
+                    messages,
+                    settings.maxTokens || 64,
+                    {},
+                    overridePayload,
+                )
+                : await CMRS.sendRequest(
+                    profileId,
+                    messages,
+                    settings.maxTokens || 64,
+                    {},
+                );
+
             const blocked = detectProviderBlock(result);
-            
+
             if (blocked) {
                 throw new Error(blocked);
             }
