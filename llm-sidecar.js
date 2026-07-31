@@ -143,7 +143,6 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
                 );
 
             const blocked = detectProviderBlock(result);
-
             if (blocked) {
                 throw new Error(blocked);
             }
@@ -158,12 +157,38 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
                 return text.replace(THINK_RE, '').trim();
             }
 
-            // content vazio (inclui reasoning-only) → tenta direct fetch
+            // CMRS respondeu, mas content vazio (ex.: só reasoning).
+            // Direct fetch em Custom (Cerebras etc.) falha por CORS — não tenta.
+            // Erro explícito → toast + fallback no runClassification.
+            const reasoningOnly = !!(
+                result?.reasoning ||
+                result?.message?.reasoning ||
+                result?.message?.reasoning_content ||
+                result?.choices?.[0]?.message?.reasoning_content ||
+                result?.choices?.[0]?.message?.reasoning
+            );
+
+            if (reasoningOnly) {
+                throw new Error(
+                    'Model returned an empty response (reasoning only, no content). ' +
+                    'Disable reasoning on this model/profile or pick a non-reasoning model.',
+                );
+            }
+
+            // Resposta realmente vazia (sem reasoning) → ainda tenta direct fetch
             console.warn('[Expression Router] CMRS returned empty content, trying direct fetch');
         } else {
             console.warn('[Expression Router] CMRS not available, using direct fetch');
         }
     } catch (e) {
+        // Erros “de negócio” (reasoning-only, blocked, etc.) sobem para o classifier.
+        // Só cai no direct fetch se o CMRS em si falhou (rede/serviço) ou não existe.
+        const msg = String(e?.message || e);
+        if (
+            /reasoning only|empty response|Blocked by provider/i.test(msg)
+        ) {
+            throw e;
+        }
         console.warn('[Expression Router] CMRS failed, falling back to direct fetch:', e);
     }
 
