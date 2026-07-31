@@ -109,6 +109,9 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
     const profileId = settings.connectionProfile;
     if (!profileId) throw new Error('No Connection Profile selected.');
 
+    const profile = findConnectionProfile(profileId);
+    const isCustom = String(profile?.api || '').toLowerCase() === 'custom';
+
     // 1) Official ST path (server-side, no CORS)
     try {
         const ctx = getContext();
@@ -120,9 +123,6 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
             const messages = [];
             if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
             messages.push({ role: 'user', content: prompt });
-
-            const profile = findConnectionProfile(profileId);
-            const isCustom = String(profile?.api || '').toLowerCase() === 'custom';
 
             const result = isCustom
                 ? await CMRS.sendRequest(
@@ -157,9 +157,6 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
                 return text.replace(THINK_RE, '').trim();
             }
 
-            // CMRS respondeu, mas content vazio (ex.: só reasoning).
-            // Direct fetch em Custom (Cerebras etc.) falha por CORS — não tenta.
-            // Erro explícito → toast + fallback no runClassification.
             const reasoningOnly = !!(
                 result?.reasoning ||
                 result?.message?.reasoning ||
@@ -175,24 +172,41 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
                 );
             }
 
-            // Resposta realmente vazia (sem reasoning) → ainda tenta direct fetch
+            if (isCustom) {
+                throw new Error('Model returned an empty response.');
+            }
+
             console.warn('[Expression Router] CMRS returned empty content, trying direct fetch');
         } else {
             console.warn('[Expression Router] CMRS not available, using direct fetch');
         }
     } catch (e) {
-        // Erros “de negócio” (reasoning-only, blocked, etc.) sobem para o classifier.
-        // Só cai no direct fetch se o CMRS em si falhou (rede/serviço) ou não existe.
         const msg = String(e?.message || e);
+        const cause = String(e?.cause?.message || e?.cause || '');
+
         if (
-            /reasoning only|empty response|Blocked by provider/i.test(msg)
+            /reasoning only|empty response|Blocked by provider|Too Many Requests|rate limit|429/i.test(msg) ||
+            /Too Many Requests|rate limit|429/i.test(cause)
         ) {
+            if (/Too Many Requests|rate limit|429/i.test(msg + ' ' + cause)) {
+                throw new Error(
+                    'API rate limit (Too Many Requests). Wait a moment and try again.',
+                );
+            }
             throw e;
         }
+
+        if (isCustom) {
+            throw new Error(
+                msg && msg !== 'API request failed'
+                    ? msg
+                    : (cause || msg || 'Connection Profile request failed.'),
+            );
+        }
+
         console.warn('[Expression Router] CMRS failed, falling back to direct fetch:', e);
     }
 
-    // 2) Direct fetch (native providers / CORS-friendly)
     return await sidecarGenerateDirect({ prompt, systemPrompt });
 }
 
