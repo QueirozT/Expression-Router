@@ -267,9 +267,11 @@
     border-color: rgba(124, 156, 255, 0.5);
 }
 
-.er_btn_primary {
-    background: linear-gradient(135deg, rgba(91, 124, 250, 0.45), rgba(106, 168, 224, 0.4));
-    border-color: rgba(124, 156, 255, 0.5);
+.er_btn:disabled,
+.er_btn_disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
 }
 
 .er_btn_primary:hover {

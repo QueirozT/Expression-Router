@@ -20,6 +20,8 @@ const PROVIDER_MAP = {
     chutes:      { format: 'openai',    endpoint: 'https://llm.chutes.ai/v1/chat/completions',              secretKey: 'api_key_chutes' },
     electronhub: { format: 'openai',    endpoint: 'https://api.electronhub.ai/v1/chat/completions',         secretKey: 'api_key_electronhub' },
     xai:         { format: 'openai',    endpoint: 'https://api.x.ai/v1/chat/completions',                   secretKey: 'api_key_xai' },
+    zai:         { format: 'openai',    endpoint: 'https://api.z.ai/api/paas/v4/chat/completions',          secretKey: 'api_key_zai' },
+    zhipu:       { format: 'openai',    endpoint: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',  secretKey: 'api_key_zai' },
 };
 
 function getProviderInfo(apiSource) {
@@ -63,12 +65,24 @@ function resolveProfileConfig() {
 
     const info = getProviderInfo(profile.api);
 
-    let endpoint = info.endpoint || profile['api-url'] || null;
-    if (endpoint && endpoint.includes('/subscription/')) {
-        endpoint = endpoint.replace('/subscription/', '/');
-    }
-    if (!info.endpoint && endpoint && info.format === 'openai' && !endpoint.endsWith('/chat/completions')) {
-        endpoint = endpoint.replace(/\/+$/, '') + '/chat/completions';
+    let endpoint =
+        info.endpoint ||
+        profile['api-url'] ||
+        profile.api_url ||
+        profile.url ||
+        null;
+
+    if (endpoint && typeof endpoint === 'string') {
+        endpoint = endpoint.trim().replace(/\/+$/, '');
+
+        // Custom / OpenAI-compatible: profile usually stores base (.../v1)
+        // Direct fetch needs the full chat completions path.
+        if (
+            info.format === 'openai' &&
+            !endpoint.endsWith('/chat/completions')
+        ) {
+            endpoint = endpoint + '/chat/completions';
+        }
     }
 
     return {

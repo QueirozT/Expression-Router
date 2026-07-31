@@ -15,6 +15,8 @@ After each character message, Expression Router:
 3. Validates that the reply is one of the character’s sprite labels  
 4. Applies the expression via SillyTavern’s sprite system  
 
+If the model returns nothing valid (or the call fails), an optional **fallback expression** is applied instead.
+
 You fully control the prompt. No fixed emotion taxonomy — only the labels that exist as images in the character’s sprite folder.
 
 ---
@@ -25,6 +27,7 @@ You fully control the prompt. No fixed emotion taxonomy — only the labels that
 - At least one **Connection Profile** configured (API source + model)  
 - `allowKeysExposure: true` in SillyTavern’s `config.yaml` (needed to read the profile’s API key, same as other sidecar extensions)  
 - Character sprites present under the character’s sprite folder  
+- An open chat (classification controls stay disabled until a character chat is active)
 
 ---
 
@@ -34,8 +37,9 @@ You fully control the prompt. No fixed emotion taxonomy — only the labels that
 |--------|-------------|
 | **Enabled** | Turns automatic classification on/off |
 | **Connection Profile** | Which saved profile (API + key + model) is used as the sidecar |
+| **Fallback expression** | Label applied when classification returns nothing valid or the call fails. Choose **none** to skip |
 | **History** | How many recent non-system messages are injected via `{{history}}` |
-| **Temperature** | Sampling temperature for the sidecar call |
+| **Temperature** | Sampling temperature for the sidecar call (`0` is allowed) |
 | **Max tokens** | Max tokens for the sidecar reply (keep low; you only need one label) |
 | **Suppress ST classifier** | Sets ST’s built-in expression API to “None” so it does not overwrite this extension’s picks |
 | **Prompt** | Full classification prompt (editable). Supports wrappers below |
@@ -43,14 +47,22 @@ You fully control the prompt. No fixed emotion taxonomy — only the labels that
 | **Log prompt / Log response** | Writes expanded prompt and raw model reply to the browser console |
 | **Header click** | Collapses or expands the whole settings panel |
 
-Buttons:
+Buttons (require an open chat):
 
 - **Test / Reload** — run classification once and apply the result  
-- **Labels** — list sprite labels for the current character  
 - **Reset prompt** — restore the default prompt template  
-- **Refresh** — reload labels from the server  
+- **Refresh** — reload labels from the server and update the fallback list  
 
-Status line and output box show the last result or error. Visual toasts appear **only on errors**.
+Status line and output box show the last result or error.
+
+**Toasts**
+
+| Source | Success | Error |
+|--------|---------|--------|
+| Automatic (each message) | silent | console only |
+| `/er reload` | silent | toast |
+| `/er labels`, `/er current` | pipe / info as needed | toast when relevant |
+| UI buttons (Test, Reload, Refresh, …) | toast | toast |
 
 ---
 
@@ -87,7 +99,7 @@ Conversation (most recent last):
 Reply ONLY with ONE expression from the list above. Nothing else.
 ```
 
-You can replace this entirely. The model must return a single label that exists in `{{labels}}`; anything else is discarded.
+You can replace this entirely. The model must return a single label that exists in `{{labels}}`; anything else is discarded (then fallback applies, if set).
 
 ---
 
@@ -95,19 +107,38 @@ You can replace this entirely. The model must return a single label that exists 
 
 | Command | Action |
 |--------|--------|
-| `/er reload` | Reclassify and apply expression now |
-| `/er labels` | Show available labels for the current character |
+| `/er reload` | Reclassify and apply expression now (silent on success) |
+| `/er labels` | Return available labels as a JSON array string |
 | `/er current` | Show the last classified expression |
 
 Aliases: `/expression-router`, `/Expression-Router`.
 
-Examples:
+### `/er labels` format
+
+Returns a JSON array string, for example:
+
+```text
+["happy","sad","neutral"]
+```
+
+Suitable for `/buttons` without extra regex, e.g.:
 
 ```
-/er reload
-/er labels
-/er current
+/er labels |
+/setvar key=exprs |
+/buttons labels={{getvar::exprs}} Choose expression |
+/expression-set {{pipe}}
 ```
+
+---
+
+## Connection profiles
+
+Works with native providers (OpenAI, Claude, Mistral, OpenRouter, Google, xAI, Z.AI, …) and **Custom (OpenAI-compatible)**.
+
+For **Custom**, the Server URL is usually the API base (e.g. `https://host/v1`). The extension appends `/chat/completions` when needed for the direct sidecar request. If you already paste the full path ending in `/chat/completions`, it is left unchanged.
+
+The API key is read from SillyTavern’s secrets store (`api_key_custom` for Custom, provider-specific keys otherwise). `allowKeysExposure` must be enabled.
 
 ---
 
@@ -116,19 +147,18 @@ Examples:
 1. **Trigger** — `MESSAGE_RECEIVED` (after the character message is in chat), or manual Test / `/er reload`  
 2. **Labels** — fetched from `/api/sprites/get` for the current character (respects expression folder overrides)  
 3. **Prompt** — your template with wrappers expanded  
-4. **Call** — direct HTTP request to the provider in the Connection Profile (OpenAI-compatible, Anthropic, Google, etc.)  
+4. **Call** — direct HTTP request to the provider in the Connection Profile  
 5. **Parse** — strips think-blocks and code fences; accepts plain text or `{"expression":"..."}`  
 6. **Validate** — exact match, then case-insensitive match against available labels  
 7. **Apply** — `sendExpressionCall` with `force: true`, and updates ST’s fallback expression so the built-in worker does not overwrite it  
-
-If the profile is missing, the key cannot be read, or the reply is not a valid label, classification is skipped and an error toast is shown (when the run was manual).
+8. **Fallback** — if validation fails or the call errors and a fallback label is configured, that label is applied instead  
 
 ---
 
 ## Character changes
 
 On `CHAT_CHANGED` the label cache is cleared and rebuilt for the new character.  
-`{{expression}}` is reset. Profile list and label preview in the UI are refreshed.
+`{{expression}}` is reset. Profile list, label preview, fallback options, and control availability are refreshed.
 
 ---
 

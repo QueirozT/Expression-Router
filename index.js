@@ -8,6 +8,7 @@ import { extension_settings } from '../../../extensions.js';
 import { sendExpressionCall } from '../../expressions/index.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
+import { getContext } from '../../../st-context.js';
 import { ARGUMENT_TYPE, SlashCommandArgument } from '../../../slash-commands/SlashCommandArgument.js';
 
 import {
@@ -90,6 +91,18 @@ async function runClassification({ silent = false } = {}) {
             setStatus(`Selected: ${expression}`, 'ok');
             return expression;
         }
+
+        // Fallback when model returned nothing valid
+        const fallback = settings.fallbackExpression;
+        if (fallback) {
+            await applyExpression(fallback);
+            setStatus(`Fallback: ${fallback}`, 'waiting');
+            if (!silent) {
+                toastr.warning(`No valid expression — using fallback: ${fallback}`, MODULE);
+            }
+            return fallback;
+        }
+
         if (!silent) {
             toastr.warning('No valid expression returned.', MODULE);
             setStatus('No valid expression', 'error');
@@ -99,11 +112,20 @@ async function runClassification({ silent = false } = {}) {
         const msg = e?.message || String(e);
         setStatus(msg, 'error');
         showOutput(msg);
-        if (!silent) {
-            toastr.error(msg, MODULE);
-        } else {
-            console.error(`[${MODULE}]`, msg);
+
+        // Try fallback on error too
+        const fallback = getSettings().fallbackExpression;
+        if (fallback) {
+            try {
+                await applyExpression(fallback);
+                if (!silent) toastr.error(`${msg} — applied fallback: ${fallback}`, MODULE);
+                else console.error(`[${MODULE}]`, msg);
+                return fallback;
+            } catch { /* ignore */ }
         }
+
+        if (!silent) toastr.error(msg, MODULE);
+        else console.error(`[${MODULE}]`, msg);
         return null;
     } finally {
         _classifying = false;
@@ -132,14 +154,8 @@ function registerSlashCommands() {
 
                 if (action === 'labels' || action === 'list') {
                     const labels = await getAvailableLabels(true);
-                    if (!labels.length) {
-                        toastr.warning('No labels found for current character.', MODULE);
-                        return '';
-                    }
-                    const text = labels.join(', ');
-                    toastr.info(`Labels (${labels.length}): ${text}`, MODULE, { timeOut: 8000 });
-                    console.log(`[${MODULE}] Labels:`, labels);
-                    return text;
+                    // JSON array string — usable directly with /setvar + /buttons
+                    return JSON.stringify(labels);
                 }
 
                 if (action === 'current' || action === 'show') {
@@ -226,6 +242,11 @@ function createUI() {
                 <label class="er_field_label">Connection Profile</label>
                 <select id="er_profile" class="er_select"></select>
             </div>
+            
+            <div class="er_row">
+                <label class="er_field_label">Fallback expression</label>
+                <select id="er_fallback" class="er_select"></select>
+            </div>
 
             <div class="er_row_grid">
                 <div class="er_field">
@@ -273,7 +294,6 @@ function createUI() {
         <div class="er_btn_row">
             <button id="er_test" class="er_btn er_btn_primary"><i class="fa-solid fa-play"></i> Test</button>
             <button id="er_reload" class="er_btn"><i class="fa-solid fa-rotate"></i> Reload</button>
-            <button id="er_labels_btn" class="er_btn"><i class="fa-solid fa-tags"></i> Labels</button>
             <button id="er_reset_prompt" class="er_btn"><i class="fa-solid fa-undo"></i> Reset prompt</button>
             <button id="er_refresh_labels" class="er_btn"><i class="fa-solid fa-arrows-rotate"></i></button>
         </div>
@@ -299,6 +319,8 @@ function createUI() {
     bindEvents();
     refreshProfiles();
     refreshLabelsPreview();
+    refreshFallbackOptions();
+    updateControlsState();
 }
 
 function bindEvents() {
@@ -340,7 +362,8 @@ function bindEvents() {
     });
 
     panel.find('#er_temp').on('change', function () {
-        const v = Math.max(0, Math.min(2, Number(this.value) || 0.2));
+        const raw = Number(this.value);
+        const v = Number.isFinite(raw) ? Math.max(0, Math.min(2, raw)) : 0.2;
         this.value = v;
         updateSetting('temperature', v);
     });
@@ -387,18 +410,9 @@ function bindEvents() {
         clearSpriteCache();
         await getAvailableLabels(true);
         refreshLabelsPreview();
+        await refreshFallbackOptions();
         setStatus('Labels refreshed', 'ok');
         toastr.success('Labels refreshed', MODULE);
-    });
-
-    panel.find('#er_labels_btn').on('click', async () => {
-        const labels = await getAvailableLabels(true);
-        if (!labels.length) {
-            toastr.warning('No labels found.', MODULE);
-            return;
-        }
-        showOutput(labels.join('\n'));
-        toastr.info(`Labels (${labels.length}): ${labels.join(', ')}`, MODULE, { timeOut: 7000 });
     });
 
     panel.find('#er_test, #er_reload').on('click', async () => {
@@ -422,6 +436,11 @@ function bindEvents() {
             setStatus(msg, 'error');
             toastr.error(msg, MODULE);
         }
+    });
+    
+    panel.find('#er_fallback').on('change', function () {
+        updateSetting('fallbackExpression', this.value || '');
+        setStatus(this.value ? `Fallback: ${this.value}` : 'No fallback', 'ok');
     });
 }
 
@@ -466,6 +485,47 @@ function showOutput(text) {
     out.removeClass('er_hidden').text(text);
 }
 
+function updateControlsState() {
+    if (!panel?.length) return;
+
+    const context = getContext();
+    const hasChat = context?.characterId !== undefined
+        && context?.characterId !== null
+        && !!context?.name2;
+
+    const buttons = panel.find('#er_test, #er_reload, #er_refresh_labels');
+    buttons.prop('disabled', !hasChat);
+    buttons.toggleClass('er_btn_disabled', !hasChat);
+
+    if (!hasChat) {
+        panel.find('#er_labels_preview').text('Open a chat to use classification and labels.');
+        panel.find('#er_fallback').prop('disabled', true);
+    } else {
+        panel.find('#er_fallback').prop('disabled', false);
+    }
+}
+
+async function refreshFallbackOptions() {
+    if (!panel?.length) return;
+    const select = panel.find('#er_fallback');
+    const current = getSettings().fallbackExpression || 'neutral';
+    const labels = await getAvailableLabels(false);
+
+    select.empty();
+    select.append($('<option>').val('').text('— none —'));
+
+    const list = labels.length ? labels : ['neutral'];
+    for (const label of list) {
+        select.append($('<option>').val(label).text(label));
+    }
+
+    if (list.includes(current) || current === '') {
+        select.val(current);
+    } else {
+        select.val('');
+    }
+}
+
 // ─── Init ────────────────────────────────────────────────────────
 
 jQuery(async () => {
@@ -488,7 +548,9 @@ jQuery(async () => {
         setLastExpression('');
         await getAvailableLabels(true);
         refreshLabelsPreview();
+        await refreshFallbackOptions();
         refreshProfiles();
+        updateControlsState();
     });
 
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, async () => {

@@ -26,6 +26,7 @@ const DEFAULT_SETTINGS = {
     suppressClassifier: true,
     uiCollapsed: false,
     hidePrompt: false,
+    fallbackExpression: 'neutral',
 };
 
 export function getSettings() {
