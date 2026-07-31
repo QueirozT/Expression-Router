@@ -9,7 +9,6 @@ import { sendExpressionCall } from '../../expressions/index.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
 import { getContext } from '../../../st-context.js';
-import { saveMetadataDebounced } from '../../../../script.js';
 import { ARGUMENT_TYPE, SlashCommandArgument } from '../../../slash-commands/SlashCommandArgument.js';
 
 import {
@@ -44,14 +43,15 @@ function setChatExpressionMeta(expression) {
     const ctx = getContext();
     const meta = ctx.chatMetadata || ctx.chat_metadata;
     if (!meta) return;
+
     meta.expression_router = {
         expression: expression || '',
         updatedAt: Date.now(),
     };
+
     try {
-        if (typeof saveMetadataDebounced === 'function') {
-            saveMetadataDebounced();
-        } else if (typeof ctx.saveMetadata === 'function') {
+        // Prefer context helper when available (no hard import)
+        if (typeof ctx.saveMetadata === 'function') {
             ctx.saveMetadata();
         }
     } catch (e) {

@@ -9,6 +9,9 @@ let lastExpression = '';
 
 export function setLabels(labels) {
     currentLabels = [...(labels || [])];
+    try {
+        window.expressionRouterLabels = currentLabels;
+    } catch { /* ignore */ }
 }
 
 export function getLabels() {
