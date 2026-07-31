@@ -109,7 +109,7 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
     const profileId = settings.connectionProfile;
     if (!profileId) throw new Error('No Connection Profile selected.');
 
-    // 1) Official ST path (server-side)
+    // 1) Official ST path (server-side, no CORS)
     try {
         const ctx = getContext();
         const CMRS = ctx?.ConnectionManagerRequestService
@@ -131,17 +131,10 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
                 console.log('[Expression Router] CMRS raw:', result);
             }
 
-            const text =
-                (typeof result === 'string' && result) ||
-                result?.content ||
-                result?.message?.content ||
-                result?.choices?.[0]?.message?.content ||
-                result?.extracted?.content ||
-                result?.text ||
-                '';
+            const text = extractCmrsText(result);
 
             if (text) {
-                return String(text).replace(THINK_RE, '').trim();
+                return text.replace(THINK_RE, '').trim();
             }
 
             console.warn('[Expression Router] CMRS returned empty text, trying direct fetch');
@@ -152,8 +145,45 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
         console.warn('[Expression Router] CMRS failed, falling back to direct fetch:', e);
     }
 
-    // 2) Direct fetch (works for providers with CORS / native endpoints)
+    // 2) Direct fetch (native providers / CORS-friendly)
     return await sidecarGenerateDirect({ prompt, systemPrompt });
+}
+
+/**
+ * Normalize CMRS / ST response shapes into a plain string.
+ * Many models put the answer in reasoning when content is empty.
+ */
+function extractCmrsText(result) {
+    if (result == null) return '';
+
+    if (typeof result === 'string') return result;
+
+    const candidates = [
+        result.content,
+        result.message?.content,
+        result.choices?.[0]?.message?.content,
+        result.choices?.[0]?.text,
+        result.extracted?.content,
+        result.text,
+        // reasoning models (Cerebras, etc.)
+        result.reasoning,
+        result.message?.reasoning,
+        result.message?.reasoning_content,
+        result.choices?.[0]?.message?.reasoning_content,
+        result.choices?.[0]?.message?.reasoning,
+    ];
+
+    for (const c of candidates) {
+        if (typeof c === 'string' && c.trim()) return c;
+        if (Array.isArray(c)) {
+            const joined = c
+                .map(part => (typeof part === 'string' ? part : part?.text || ''))
+                .join('');
+            if (joined.trim()) return joined;
+        }
+    }
+
+    return '';
 }
 
 async function sidecarGenerateDirect({ prompt, systemPrompt = '' }) {

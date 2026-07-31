@@ -26,12 +26,20 @@ export async function classifyExpression() {
     try {
         raw = await sidecarGenerate({
             prompt,
-            systemPrompt: 'You are a classifier. Output EXACTLY one word: an expression label from the provided list. No explanation. No punctuation. No thinking.',
+            systemPrompt:
+                'You are a classifier. Reply with EXACTLY one expression label from the list. ' +
+                'One word only. No explanation. No markdown. No thinking.',
         });
     } catch (e) {
         console.error('[Expression Router] Generation error:', e);
         throw e;
     }
+
+    // Strip think blocks early — not part of the answer
+    raw = String(raw || '')
+        .replace(/<think[\s\S]*?<\/think>/gi, '')
+        .replace(/```[\s\S]*?```/g, '')
+        .trim();
 
     if (settings.debugResponse) {
         console.log('[Expression Router] Raw response:', raw);
@@ -41,62 +49,96 @@ export async function classifyExpression() {
         throw new Error('Model returned an empty response.');
     }
 
-    const parsed = parseResponse(raw);
-    if (!parsed) {
-        throw new Error(`Could not parse expression from: ${String(raw).slice(0, 120)}`);
-    }
-
-    if (hasLabel(parsed)) {
-        setLastExpression(parsed);
-        return parsed;
-    }
-
-    const normalized = normalizeLabel(parsed);
-    if (normalized) {
-        setLastExpression(normalized);
-        return normalized;
-    }
-
-    // Last resort: label appears anywhere in the raw text (verbose models)
     const labels = window.expressionRouterLabels || [];
-    const lowerRaw = String(raw).toLowerCase();
-    for (const label of [...labels].reverse()) {
-        if (lowerRaw.includes(label.toLowerCase())) {
+    const parsed = parseResponse(raw);
+
+    if (parsed) {
+        if (hasLabel(parsed)) {
+            setLastExpression(parsed);
+            return parsed;
+        }
+        const normalized = normalizeLabel(parsed);
+        if (normalized) {
+            setLastExpression(normalized);
+            return normalized;
+        }
+    }
+
+    // Last short line that is exactly a label
+    const lines = raw
+        .split('\n')
+        .map(l => l.replace(/^[\s*#\-\d.]+/, '').replace(/^["'`]+|["'`]+$/g, '').trim())
+        .filter(Boolean);
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        if (hasLabel(line)) {
+            setLastExpression(line);
+            return line;
+        }
+        const n = normalizeLabel(line);
+        if (n) {
+            setLastExpression(n);
+            return n;
+        }
+    }
+
+    // Whole-word match anywhere (longer labels first)
+    const sorted = [...labels].sort((a, b) => b.length - a.length);
+    const lowerRaw = raw.toLowerCase();
+    for (const label of sorted) {
+        const re = new RegExp(
+            `(?:^|[^a-z0-9_])${escapeRegExp(label)}(?:[^a-z0-9_]|$)`,
+            'i',
+        );
+        if (re.test(lowerRaw)) {
             setLastExpression(label);
             return label;
         }
     }
 
     throw new Error(
-        `Invalid expression "${parsed}" (not in character labels). Raw: ${String(raw).slice(0, 120)}`,
+        `Invalid expression "${parsed || '(none)'}" (not in character labels). Raw: ${raw.slice(0, 160)}`,
     );
+}
+
+function escapeRegExp(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function parseResponse(text) {
     if (!text || typeof text !== 'string') return null;
 
-    let cleaned = text
-        .replace(/```[\s\S]*?```/g, '')
-        .replace(/<think[\s\S]*?<\/think>/gi, '')
-        .trim();
+    let cleaned = text.trim();
 
-    // Try JSON { "expression": "..." }
     try {
         const json = JSON.parse(cleaned);
         if (json.expression) return String(json.expression).trim();
         if (json.label) return String(json.label).trim();
     } catch { /* not JSON */ }
 
-    // First non-empty line, strip quotes
-    const line = cleaned
+    const lines = cleaned
         .split('\n')
         .map(l => l.trim())
-        .find(l => l.length > 0);
+        .filter(l => l.length > 0);
 
-    if (!line) return null;
+    if (!lines.length) return null;
 
-    return line
+    // Prefer LAST line (answer often at the end)
+    let line = lines[lines.length - 1]
+        .replace(/^[\s*#\-\d.]+/, '')
         .replace(/^["'`]+/, '')
         .replace(/["'`]+$/, '')
         .trim();
+
+    if (line.length > 40 && lines.length > 1) {
+        const first = lines[0]
+            .replace(/^[\s*#\-\d.]+/, '')
+            .replace(/^["'`]+/, '')
+            .replace(/["'`]+$/, '')
+            .trim();
+        if (first.length <= 40) return first;
+    }
+
+    return line;
 }
