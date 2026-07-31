@@ -219,5 +219,36 @@ async function callOpenAI({ endpoint, apiKey, model, systemPrompt, prompt, tempe
     }
 
     const data = await response.json();
-    return data.choices?.[0]?.message?.content || '';
+
+    const message = data.choices?.[0]?.message;
+    if (!message) {
+        // Surface useful debug for odd providers (Z.AI, etc.)
+        const preview = JSON.stringify(data).slice(0, 300);
+        throw new Error(`${provider} returned no message. Body: ${preview}`);
+    }
+
+    let content = message.content;
+
+    // Some models return content as array of parts
+    if (Array.isArray(content)) {
+        content = content
+            .map(part => (typeof part === 'string' ? part : part?.text || ''))
+            .join('');
+    }
+
+    // Fallback: some Z.AI / reasoning models put text elsewhere
+    if (!content || !String(content).trim()) {
+        content =
+            message.reasoning_content ||
+            message.reasoning ||
+            data.choices?.[0]?.text ||
+            '';
+    }
+
+    if (!content || !String(content).trim()) {
+        const preview = JSON.stringify(message).slice(0, 300);
+        throw new Error(`${provider} empty content. Message: ${preview}`);
+    }
+
+    return String(content);
 }

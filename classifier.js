@@ -37,10 +37,14 @@ export async function classifyExpression() {
         console.log('[Expression Router] Raw response:', raw);
     }
 
-    if (!raw) return null;
+    if (!raw) {
+        throw new Error('Model returned an empty response.');
+    }
 
     const parsed = parseResponse(raw);
-    if (!parsed) return null;
+    if (!parsed) {
+        throw new Error(`Could not parse expression from: ${String(raw).slice(0, 120)}`);
+    }
 
     if (hasLabel(parsed)) {
         setLastExpression(parsed);
@@ -53,8 +57,9 @@ export async function classifyExpression() {
         return normalized;
     }
 
-    console.warn('[Expression Router] Invalid expression (not in labels):', parsed);
-    return null;
+    throw new Error(
+        `Invalid expression "${parsed}" (not in character labels). Raw: ${String(raw).slice(0, 120)}`,
+    );
 }
 
 function parseResponse(text) {

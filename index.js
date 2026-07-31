@@ -89,43 +89,46 @@ async function runClassification({ silent = false } = {}) {
         if (expression) {
             await applyExpression(expression);
             setStatus(`Selected: ${expression}`, 'ok');
+            if (!silent) {
+                // only UI buttons pass silent:false and may toast success themselves
+            }
             return expression;
         }
 
-        // Fallback when model returned nothing valid
         const fallback = settings.fallbackExpression;
         if (fallback) {
             await applyExpression(fallback);
             setStatus(`Fallback: ${fallback}`, 'waiting');
-            if (!silent) {
-                toastr.warning(`No valid expression — using fallback: ${fallback}`, MODULE);
-            }
+            showOutput(`No valid expression from model — applied fallback: ${fallback}`);
+            // Always notify when model failed to produce a valid label
+            toastr.warning(`No valid expression — fallback: ${fallback}`, MODULE);
             return fallback;
         }
 
-        if (!silent) {
-            toastr.warning('No valid expression returned.', MODULE);
-            setStatus('No valid expression', 'error');
-        }
+        setStatus('No valid expression', 'error');
+        showOutput('No valid expression returned by the model.');
+        toastr.warning('No valid expression returned.', MODULE);
         return null;
     } catch (e) {
         const msg = e?.message || String(e);
         setStatus(msg, 'error');
         showOutput(msg);
+        // Always toast errors (auto, slash, or UI)
+        toastr.error(msg, MODULE);
+        console.error(`[${MODULE}]`, e);
 
-        // Try fallback on error too
         const fallback = getSettings().fallbackExpression;
         if (fallback) {
             try {
                 await applyExpression(fallback);
-                if (!silent) toastr.error(`${msg} — applied fallback: ${fallback}`, MODULE);
-                else console.error(`[${MODULE}]`, msg);
+                setStatus(`Error — fallback: ${fallback}`, 'waiting');
+                showOutput(`${msg}\n\nApplied fallback: ${fallback}`);
+                toastr.warning(`Applied fallback: ${fallback}`, MODULE);
                 return fallback;
-            } catch { /* ignore */ }
+            } catch (e2) {
+                console.error(`[${MODULE}] fallback failed:`, e2);
+            }
         }
-
-        if (!silent) toastr.error(msg, MODULE);
-        else console.error(`[${MODULE}]`, msg);
         return null;
     } finally {
         _classifying = false;
@@ -522,7 +525,7 @@ async function refreshFallbackOptions() {
     if (list.includes(current) || current === '') {
         select.val(current);
     } else {
-        select.val('');
+        select.val(list.includes('neutral') ? 'neutral' : '');
     }
 }
 
