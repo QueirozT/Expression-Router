@@ -383,7 +383,7 @@ function createUI() {
         <div id="er_labels_preview" class="er_labels_preview"></div>
 
         <div class="er_hint er_commands_hint">
-            Commands: <code>/er reload</code> · <code>/er labels</code> · <code>/er current</code>
+            Commands: <code>/er reload</code> · <code>/er set <label></code> · <code>/er current</code>
         </div>
     </div>
 </div>
