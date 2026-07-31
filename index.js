@@ -554,6 +554,12 @@ jQuery(async () => {
         await refreshFallbackOptions();
         refreshProfiles();
         updateControlsState();
+
+        // Classify current scene on chat open (same path as MESSAGE_RECEIVED)
+        const settings = getSettings();
+        if (settings.enabled && isSidecarConfigured()) {
+            await runClassification({ silent: true });
+        }
     });
 
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, async () => {

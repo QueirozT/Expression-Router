@@ -124,7 +124,13 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
             const result = await CMRS.sendRequest(
                 profileId,
                 messages,
-                settings.maxTokens || 32,
+                settings.maxTokens || 64,
+                {},
+                // overridePayload — forwarded to the backend when supported
+                {
+                    reasoning_effort: 'none',
+                    disable_reasoning: true,
+                },
             );
 
             if (settings.debugResponse) {
@@ -291,17 +297,22 @@ async function callOpenAI({ endpoint, apiKey, model, systemPrompt, prompt, tempe
     if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
     messages.push({ role: 'user', content: prompt });
 
+    // Disable reasoning / thinking when the provider supports it (Cerebras GLM, etc.)
+    const body = {
+        model,
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+        reasoning_effort: 'none',
+        disable_reasoning: true,
+    };
+
     let response;
     try {
         response = await fetch(endpoint, {
             method: 'POST',
             headers,
-            body: JSON.stringify({
-                model,
-                messages,
-                temperature,
-                max_tokens: maxTokens,
-            }),
+            body: JSON.stringify(body),
         });
     } catch (err) {
         throw new Error(
@@ -312,7 +323,22 @@ async function callOpenAI({ endpoint, apiKey, model, systemPrompt, prompt, tempe
 
     if (!response.ok) {
         const err = await response.text().catch(() => '');
-        throw new Error(`${provider} ${response.status}: ${err.slice(0, 200)}`);
+        // Some APIs reject unknown fields — retry once without reasoning flags
+        if (response.status === 400 && /reasoning|thinking|disable_reasoning/i.test(err)) {
+            delete body.reasoning_effort;
+            delete body.disable_reasoning;
+            response = await fetch(endpoint, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(body),
+            });
+            if (!response.ok) {
+                const err2 = await response.text().catch(() => '');
+                throw new Error(`${provider} ${response.status}: ${err2.slice(0, 200)}`);
+            }
+        } else {
+            throw new Error(`${provider} ${response.status}: ${err.slice(0, 200)}`);
+        }
     }
 
     const data = await response.json();
