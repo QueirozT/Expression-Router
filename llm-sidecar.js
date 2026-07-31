@@ -129,7 +129,6 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
                 // overridePayload — forwarded to the backend when supported
                 {
                     reasoning_effort: 'none',
-                    disable_reasoning: true,
                 },
             );
             
