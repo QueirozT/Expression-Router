@@ -176,12 +176,15 @@ async function onMessageReceived() {
 
 function registerSlashCommands() {
     try {
-        // /er reload  |  /expression-router reload
         SlashCommandParser.addCommandObject(SlashCommand.fromProps({
             name: 'er',
             aliases: ['expression-router', 'Expression-Router'],
             callback: async (args, value) => {
-                const action = String(value || args?.action || '').trim().toLowerCase();
+                // value costuma ser a string inteira após o comando, ex.: "set joy"
+                const full = String(value || args?.action || '').trim();
+                const parts = full.split(/\s+/).filter(Boolean);
+                const action = (parts[0] || '').toLowerCase();
+                const rest = parts.slice(1).join(' ').trim();
 
                 if (action === 'reload' || action === 'classify' || action === 'run') {
                     const expr = await runClassification({ silent: false });
@@ -190,7 +193,6 @@ function registerSlashCommands() {
 
                 if (action === 'labels' || action === 'list') {
                     const labels = await getAvailableLabels(true);
-                    // JSON array string — usable directly with /setvar + /buttons
                     return JSON.stringify(labels);
                 }
 
@@ -203,22 +205,20 @@ function registerSlashCommands() {
                     toastr.info('No expression classified yet.', MODULE);
                     return '';
                 }
-                
+
                 if (action === 'set' || action === 'apply') {
-                    // /er set joy   or   /er set | joy via pipe
-                    let label = String(args?.label || args?.expression || '').trim();
+                    // Prioridade: named arg → resto após "set" → pipe/value puro
+                    let label = String(
+                        args?.label || args?.expression || rest || '',
+                    ).trim();
+
+                    // Se o usuário usou pipe sem "set" no value (ex.: /er set | via pipe
+                    // em alguns fluxos o value já vem só com o label)
                     if (!label && typeof value === 'string') {
-                        // "/er set joy" → value may be "set joy" already consumed as action
-                        // unnamed arg after set:
-                    }
-                    // Prefer remaining unnamed: when user types "/er set neutral"
-                    // SlashCommand often puts full string in value — parse:
-                    const full = String(value || '').trim();
-                    const parts = full.split(/\s+/);
-                    if (parts[0] === 'set' || parts[0] === 'apply') {
-                        label = parts.slice(1).join(' ').trim();
-                    } else if (!label) {
-                        label = full;
+                        const v = value.trim();
+                        if (v && !/^(set|apply)\b/i.test(v)) {
+                            label = v;
+                        }
                     }
 
                     if (!label) {
@@ -236,13 +236,13 @@ function registerSlashCommands() {
                         return '';
                     }
 
+                    // Mesmo caminho de apply da classificação / escolha de sprite
                     await applyExpression(match);
                     setStatus(`Set: ${match}`, 'ok');
                     toastr.success(`Expression set: ${match}`, MODULE);
                     return match;
                 }
 
-                // help
                 toastr.info(
                     'Usage: /er reload | /er labels | /er current | /er set <label>',
                     MODULE,
@@ -252,7 +252,7 @@ function registerSlashCommands() {
             },
             unnamedArgumentList: [
                 SlashCommandArgument.fromProps({
-                    description: 'Action: reload | labels | current | set',
+                    description: 'Action: reload | labels | current | set <label>',
                     typeList: [ARGUMENT_TYPE.STRING],
                     isRequired: false,
                 }),
@@ -263,7 +263,7 @@ function registerSlashCommands() {
                     <code>/er reload</code> — reclassify expression now<br>
                     <code>/er labels</code> — list available labels<br>
                     <code>/er current</code> — show last classified expression<br>
-                    <code>/er set <label></code> — define the expression manually
+                    <code>/er set <label></code> — set expression manually (same as sprite pick)
                 </div>
             `,
         }));

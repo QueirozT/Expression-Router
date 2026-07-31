@@ -4,29 +4,35 @@ LLM-based sprite expression classifier for SillyTavern.
 
 Uses a **Connection Profile** (API + key already saved in ST) as a sidecar, so classification does not consume the main chat model or its context window.
 
+**Version:** 1.4.0
+
 ---
 
 ## What it does
 
 After each character message, Expression Router:
 
-1. Builds a prompt with the expressions available for the current character and recent chat history  
-2. Calls the model from the selected Connection Profile  
-3. Validates that the reply is one of the character’s sprite labels  
-4. Applies the expression via SillyTavern’s sprite system  
+1. Builds a prompt with the expressions available for the current character and recent chat history
+2. Calls the model from the selected Connection Profile (via ST’s Connection Manager when available, otherwise direct HTTP)
+3. Validates that the reply is one of the character’s sprite labels
+4. Applies the expression via SillyTavern’s sprite system
 
 If the model returns nothing valid (or the call fails), an optional **fallback expression** is applied instead.
 
 You fully control the prompt. No fixed emotion taxonomy — only the labels that exist as images in the character’s sprite folder.
 
+On chat switch, the last expression saved for that chat is restored when possible (no extra LLM call).
+
+Manual set (`/er set <label>`) uses the **same apply path** as classification and as picking a sprite: `sendExpressionCall` with `force: true`, updates ST’s fallback expression, chat metadata, and `{{expression}}`.
+
 ---
 
 ## Requirements
 
-- SillyTavern with the **Expressions (Sprites)** extension enabled  
-- At least one **Connection Profile** configured (API source + model)  
-- `allowKeysExposure: true` in SillyTavern’s `config.yaml` (needed to read the profile’s API key, same as other sidecar extensions)  
-- Character sprites present under the character’s sprite folder  
+- SillyTavern with the **Expressions (Sprites)** extension enabled
+- At least one **Connection Profile** configured (API source + model)
+- `allowKeysExposure: true` in SillyTavern’s `config.yaml` (needed for the direct-fetch path to read the profile’s API key; same as other sidecar extensions)
+- Character sprites present under the character’s sprite folder
 - An open chat (classification controls stay disabled until a character chat is active)
 
 ---
@@ -38,9 +44,9 @@ You fully control the prompt. No fixed emotion taxonomy — only the labels that
 | **Enabled** | Turns automatic classification on/off |
 | **Connection Profile** | Which saved profile (API + key + model) is used as the sidecar |
 | **Fallback expression** | Label applied when classification returns nothing valid or the call fails. Choose **none** to skip |
-| **History** | How many recent non-system messages are injected via `{{history}}` |
-| **Temperature** | Sampling temperature for the sidecar call (`0` is allowed) |
-| **Max tokens** | Max tokens for the sidecar reply (keep low; you only need one label) |
+| **History** | How many recent non-system messages are injected via `{{history}}` (default: 4, max: 50) |
+| **Temperature** | Sampling temperature for the sidecar call (`0` is allowed; default: `0`) |
+| **Max tokens** | Max tokens for the sidecar reply (default: 256; keep low, e.g. 16–32 — you only need one label) |
 | **Suppress ST classifier** | Sets ST’s built-in expression API to “None” so it does not overwrite this extension’s picks |
 | **Prompt** | Full classification prompt (editable). Supports wrappers below |
 | **Hide prompt** | Collapses the prompt editor in the UI |
@@ -49,20 +55,21 @@ You fully control the prompt. No fixed emotion taxonomy — only the labels that
 
 Buttons (require an open chat):
 
-- **Test / Reload** — run classification once and apply the result  
-- **Reset prompt** — restore the default prompt template  
-- **Refresh** — reload labels from the server and update the fallback list  
+- **Test / Reload** — run classification once and apply the result
+- **Reset prompt** — restore the default prompt template
+- **Refresh** — reload labels from the server and update the fallback list
 
 Status line and output box show the last result or error.
 
 **Toasts**
 
-| Source | Success | Error |
-|--------|---------|--------|
-| Automatic (each message) | silent | console only |
-| `/er reload` | silent | toast |
-| `/er labels`, `/er current` | pipe / info as needed | toast when relevant |
-| UI buttons (Test, Reload, Refresh, …) | toast | toast |
+| Source | Success | No valid label / fallback | Error |
+|--------|---------|---------------------------|--------|
+| Automatic (`MESSAGE_RECEIVED`) | silent | toast (warning) | toast (error) |
+| `/er reload` | silent (returns label via pipe) | toast (warning) | toast (error) |
+| `/er labels`, `/er current` | pipe / info as needed | — | toast when relevant |
+| `/er set <label>` | toast (success) | — | toast (error) |
+| UI buttons (Test, Reload, Refresh, …) | toast | toast | toast |
 
 ---
 
@@ -79,7 +86,7 @@ Use these inside the extension prompt. They are expanded right before each call.
 | `{{last_char}}` | Last non-user, non-system message text |
 | `{{last_user}}` | Last user message text |
 | `{{last_message}}` | Very last message in the chat |
-| `{{expression}}` | Last successfully classified expression |
+| `{{expression}}` | Last successfully classified (or manually set) expression |
 | `{{char}}` | Current character name |
 | `{{user}}` | Current user name |
 
@@ -107,9 +114,10 @@ You can replace this entirely. The model must return a single label that exists 
 
 | Command | Action |
 |--------|--------|
-| `/er reload` | Reclassify and apply expression now (silent on success) |
-| `/er labels` | Return available labels as a JSON array string |
-| `/er current` | Show the last classified expression |
+| `/er reload` | Reclassify and apply expression now (also accepts `classify` / `run`) |
+| `/er labels` | Return available labels as a JSON array string (also accepts `list`) |
+| `/er current` | Show the last classified / set expression (also accepts `show`) |
+| `/er set <label>` | Apply an expression manually without calling the model (also accepts `apply`). Same save path as classification / sprite pick |
 
 Aliases: `/expression-router`, `/Expression-Router`.
 
@@ -127,44 +135,72 @@ Suitable for `/buttons` without extra regex, e.g.:
 /er labels |
 /setvar key=exprs |
 /buttons labels={{getvar::exprs}} Choose expression |
-/expression-set {{pipe}}
+/er set {{pipe}}
 ```
+
+### `/er set` examples
+
+```
+/er set joy
+/er set neutral
+/er labels | /er set {{pipe}}
+```
+
+The label must exist among the character’s current sprite labels (case-insensitive match).  
+Applies via `sendExpressionCall` with `force: true`, updates ST’s `fallback_expression`, chat metadata, and `{{expression}}` — the same path used after automatic classification.
 
 ---
 
 ## Connection profiles
 
-Works with native providers (OpenAI, Claude, Mistral, OpenRouter, Google, xAI, Z.AI, …) and **Custom (OpenAI-compatible)**.
+Works with native providers (OpenAI, Claude, Mistral, OpenRouter, Google, xAI, Z.AI, DeepSeek, Groq, …) and **Custom (OpenAI-compatible)**.
 
-For **Custom**, the Server URL is usually the API base (e.g. `https://host/v1`). The extension appends `/chat/completions` when needed for the direct sidecar request. If you already paste the full path ending in `/chat/completions`, it is left unchanged.
+**Call order**
 
-The API key is read from SillyTavern’s secrets store (`api_key_custom` for Custom, provider-specific keys otherwise). `allowKeysExposure` must be enabled.
+1. **Connection Manager Request Service (CMRS)** — preferred. Server-side, no CORS, uses the selected profile as ST already knows it.
+2. **Direct browser fetch** — fallback when CMRS is unavailable or returns empty text. Reads the API key from ST’s secrets store and calls the provider endpoint.
+
+For **Custom**, the Server URL is usually the API base (e.g. `https://host/v1`). On the direct path the extension appends `/chat/completions` when needed. If you already paste the full path ending in `/chat/completions`, it is left unchanged.
+
+The API key is read from SillyTavern’s secrets store (`api_key_custom` for Custom, provider-specific keys otherwise). `allowKeysExposure` must be enabled for the direct path.
+
+Reasoning / thinking tokens are disabled when the provider supports it (`reasoning_effort: none`, `disable_reasoning: true`), with a safe retry if the API rejects those fields.
 
 ---
 
 ## How classification works
 
-1. **Trigger** — `MESSAGE_RECEIVED` (after the character message is in chat), or manual Test / `/er reload`  
-2. **Labels** — fetched from `/api/sprites/get` for the current character (respects expression folder overrides)  
-3. **Prompt** — your template with wrappers expanded  
-4. **Call** — direct HTTP request to the provider in the Connection Profile  
-5. **Parse** — strips think-blocks and code fences; accepts plain text or `{"expression":"..."}`  
-6. **Validate** — exact match, then case-insensitive match against available labels  
-7. **Apply** — `sendExpressionCall` with `force: true`, and updates ST’s fallback expression so the built-in worker does not overwrite it  
-8. **Fallback** — if validation fails or the call errors and a fallback label is configured, that label is applied instead  
+1. **Trigger** — `MESSAGE_RECEIVED` (after the character message is in chat), or manual Test / `/er reload`
+2. **Labels** — fetched from `/api/sprites/get` for the current character (respects expression folder overrides)
+3. **Prompt** — your template with wrappers expanded
+4. **Call** — CMRS first, then direct HTTP to the provider in the Connection Profile
+5. **Parse** — strips `<think>` blocks and code fences; accepts plain text or `{"expression":"..."}` / `{"label":"..."}`
+6. **Validate** — exact match, then case-insensitive match, then last-line heuristics, then whole-word search in the raw reply (longer labels first)
+7. **Apply** — `sendExpressionCall` with `force: true`, updates ST’s `fallback_expression`, stores the expression in chat metadata, and keeps `{{expression}}` in sync
+8. **Fallback** — if validation fails or the call errors and a fallback label is configured, that label is applied instead
+
+Manual `/er set <label>` skips steps 3–6 and goes straight to the same **Apply** path.
 
 ---
 
-## Character changes
+## Character / chat changes
 
-On `CHAT_CHANGED` the label cache is cleared and rebuilt for the new character.  
-`{{expression}}` is reset. Profile list, label preview, fallback options, and control availability are refreshed.
+On `CHAT_CHANGED`:
+
+- Label cache is cleared and rebuilt for the new character
+- `{{expression}}` is reset
+- Profile list, label preview, fallback options, and control availability are refreshed
+- If this chat previously had an expression saved in metadata, it is **restored** (no LLM call)
+- Otherwise, if a fallback expression is configured, that label is applied once
+
+On `CHARACTER_MESSAGE_RENDERED`, labels are refreshed so newly available sprites are picked up.
 
 ---
 
 ## Notes
 
-- Classification runs only when the extension is **Enabled** and a valid Connection Profile is selected.  
-- Keep **Max tokens** small (e.g. 16–32); the expected answer is a single word.  
-- Custom (non-default) sprite labels should also be registered in ST’s Expressions extension if you want full compatibility with ST’s own UI.  
+- Classification runs only when the extension is **Enabled** and a Connection Profile is selected. Manual `/er set` only needs an open chat and valid sprite labels.
+- Keep **Max tokens** small (e.g. 16–32); the expected answer is a single word. The default of 256 works but is wasteful for classification.
+- Custom (non-default) sprite labels should also be registered in ST’s Expressions extension if you want full compatibility with ST’s own UI.
 - This extension does not upload sprites, manage conditionals, or change backgrounds — it only classifies and applies expressions.
+- Concurrent classification calls are ignored (`_classifying` guard) so rapid messages do not stack requests.
