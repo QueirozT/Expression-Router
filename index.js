@@ -203,10 +203,48 @@ function registerSlashCommands() {
                     toastr.info('No expression classified yet.', MODULE);
                     return '';
                 }
+                
+                if (action === 'set' || action === 'apply') {
+                    // /er set joy   or   /er set | joy via pipe
+                    let label = String(args?.label || args?.expression || '').trim();
+                    if (!label && typeof value === 'string') {
+                        // "/er set joy" → value may be "set joy" already consumed as action
+                        // unnamed arg after set:
+                    }
+                    // Prefer remaining unnamed: when user types "/er set neutral"
+                    // SlashCommand often puts full string in value — parse:
+                    const full = String(value || '').trim();
+                    const parts = full.split(/\s+/);
+                    if (parts[0] === 'set' || parts[0] === 'apply') {
+                        label = parts.slice(1).join(' ').trim();
+                    } else if (!label) {
+                        label = full;
+                    }
+
+                    if (!label) {
+                        toastr.warning('Usage: /er set <label>', MODULE);
+                        return '';
+                    }
+
+                    const labels = await getAvailableLabels(true);
+                    const match =
+                        labels.find(l => l === label) ||
+                        labels.find(l => l.toLowerCase() === label.toLowerCase());
+
+                    if (!match) {
+                        toastr.error(`Unknown label: ${label}`, MODULE);
+                        return '';
+                    }
+
+                    await applyExpression(match);
+                    setStatus(`Set: ${match}`, 'ok');
+                    toastr.success(`Expression set: ${match}`, MODULE);
+                    return match;
+                }
 
                 // help
                 toastr.info(
-                    'Usage: /er reload | /er labels | /er current',
+                    'Usage: /er reload | /er labels | /er current | /er set <label>',
                     MODULE,
                     { timeOut: 6000 },
                 );
@@ -214,7 +252,7 @@ function registerSlashCommands() {
             },
             unnamedArgumentList: [
                 SlashCommandArgument.fromProps({
-                    description: 'Action: reload | labels | current',
+                    description: 'Action: reload | labels | current | set',
                     typeList: [ARGUMENT_TYPE.STRING],
                     isRequired: false,
                 }),
@@ -224,7 +262,8 @@ function registerSlashCommands() {
                     <b>Expression Router</b> commands:<br>
                     <code>/er reload</code> — reclassify expression now<br>
                     <code>/er labels</code> — list available labels<br>
-                    <code>/er current</code> — show last classified expression
+                    <code>/er current</code> — show last classified expression<br>
+                    <code>/er set <label></code> — define the expression manually
                 </div>
             `,
         }));
@@ -259,7 +298,7 @@ function createUI() {
             <span class="er_header_title">Expression Router</span>
             <span class="er_header_sub">Sidecar expression classifier</span>
         </div>
-        <span class="er_badge">v1.3</span>
+        <span class="er_badge">v1.4</span>
         <i class="fa-solid fa-chevron-down er_chevron ${collapsed ? '' : 'expanded'}"></i>
     </div>
 

@@ -132,6 +132,12 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
                     disable_reasoning: true,
                 },
             );
+            
+            const blocked = detectProviderBlock(result);
+            
+            if (blocked) {
+                throw new Error(blocked);
+            }
 
             if (settings.debugResponse) {
                 console.log('[Expression Router] CMRS raw:', result);
@@ -190,6 +196,33 @@ function extractCmrsText(result) {
     }
 
     return '';
+}
+
+function detectProviderBlock(result) {
+    if (!result || typeof result !== 'object') return null;
+
+    const finish =
+        result.finish_reason ||
+        result.choices?.[0]?.finish_reason ||
+        result.choices?.[0]?.native_finish_reason ||
+        '';
+
+    if (/content_filter|safety|blocked/i.test(String(finish))) {
+        return `Blocked by provider filter (finish_reason: ${finish}).`;
+    }
+
+    const err =
+        result.error?.message ||
+        result.error ||
+        result.blockReason ||
+        result.promptFeedback?.blockReason ||
+        '';
+
+    if (err && /filter|safety|blocked|policy|refus/i.test(String(err))) {
+        return `Blocked by provider: ${String(err).slice(0, 160)}`;
+    }
+
+    return null;
 }
 
 async function sidecarGenerateDirect({ prompt, systemPrompt = '' }) {
