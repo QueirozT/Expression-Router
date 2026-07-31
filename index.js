@@ -298,7 +298,7 @@ function createUI() {
             <span class="er_header_title">Expression Router</span>
             <span class="er_header_sub">Sidecar expression classifier</span>
         </div>
-        <span class="er_badge">v1.4</span>
+        <span class="er_badge">v1.5</span>
         <i class="fa-solid fa-chevron-down er_chevron ${collapsed ? '' : 'expanded'}"></i>
     </div>
 

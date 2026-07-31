@@ -158,7 +158,8 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
                 return text.replace(THINK_RE, '').trim();
             }
 
-            console.warn('[Expression Router] CMRS returned empty text, trying direct fetch');
+            // content vazio (inclui reasoning-only) → tenta direct fetch
+            console.warn('[Expression Router] CMRS returned empty content, trying direct fetch');
         } else {
             console.warn('[Expression Router] CMRS not available, using direct fetch');
         }
@@ -172,7 +173,7 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
 
 /**
  * Normalize CMRS / ST response shapes into a plain string.
- * Many models put the answer in reasoning when content is empty.
+ * Only real content — never fall back to reasoning/thinking dumps.
  */
 function extractCmrsText(result) {
     if (result == null) return '';
@@ -186,12 +187,6 @@ function extractCmrsText(result) {
         result.choices?.[0]?.text,
         result.extracted?.content,
         result.text,
-        // reasoning models (Cerebras, etc.)
-        result.reasoning,
-        result.message?.reasoning,
-        result.message?.reasoning_content,
-        result.choices?.[0]?.message?.reasoning_content,
-        result.choices?.[0]?.message?.reasoning,
     ];
 
     for (const c of candidates) {
@@ -202,6 +197,21 @@ function extractCmrsText(result) {
                 .join('');
             if (joined.trim()) return joined;
         }
+    }
+
+    // Diagnóstico: modelo devolveu só reasoning (disable_reasoning ignorado)
+    const reasoning =
+        result.reasoning ||
+        result.message?.reasoning ||
+        result.message?.reasoning_content ||
+        result.choices?.[0]?.message?.reasoning_content ||
+        result.choices?.[0]?.message?.reasoning ||
+        '';
+    if (typeof reasoning === 'string' && reasoning.trim()) {
+        console.warn(
+            '[Expression Router] Model returned reasoning-only (content empty). ' +
+            'Treating as blank response.',
+        );
     }
 
     return '';
@@ -393,11 +403,18 @@ async function callOpenAI({ endpoint, apiKey, model, systemPrompt, prompt, tempe
     if (Array.isArray(content)) {
         content = content.map(part => (typeof part === 'string' ? part : part?.text || '')).join('');
     }
+
     if (!content || !String(content).trim()) {
-        content = message.reasoning_content || message.reasoning || data.choices?.[0]?.text || '';
-    }
-    if (!content || !String(content).trim()) {
-        throw new Error(`${provider} empty content. Message: ${JSON.stringify(message).slice(0, 300)}`);
+        const reasoningOnly = message.reasoning_content || message.reasoning || '';
+        if (reasoningOnly && String(reasoningOnly).trim()) {
+            throw new Error(
+                'Model returned an empty response (reasoning only, no content). ' +
+                'Disable reasoning on this model/profile or pick a non-reasoning model.',
+            );
+        }
+        throw new Error(
+            `${provider} empty content. Message: ${JSON.stringify(message).slice(0, 300)}`,
+        );
     }
 
     return String(content);
