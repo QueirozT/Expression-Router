@@ -26,7 +26,7 @@ export async function classifyExpression() {
     try {
         raw = await sidecarGenerate({
             prompt,
-            systemPrompt: 'Reply ONLY with one expression label from the list. No explanation.',
+            systemPrompt: 'You are a classifier. Output EXACTLY one word: an expression label from the provided list. No explanation. No punctuation. No thinking.',
         });
     } catch (e) {
         console.error('[Expression Router] Generation error:', e);
@@ -55,6 +55,16 @@ export async function classifyExpression() {
     if (normalized) {
         setLastExpression(normalized);
         return normalized;
+    }
+
+    // Last resort: label appears anywhere in the raw text (verbose models)
+    const labels = window.expressionRouterLabels || [];
+    const lowerRaw = String(raw).toLowerCase();
+    for (const label of [...labels].reverse()) {
+        if (lowerRaw.includes(label.toLowerCase())) {
+            setLastExpression(label);
+            return label;
+        }
     }
 
     throw new Error(

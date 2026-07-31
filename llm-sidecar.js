@@ -75,12 +75,8 @@ function resolveProfileConfig() {
     if (endpoint && typeof endpoint === 'string') {
         endpoint = endpoint.trim().replace(/\/+$/, '');
 
-        // Custom / OpenAI-compatible: profile usually stores base (.../v1)
-        // Direct fetch needs the full chat completions path.
-        if (
-            info.format === 'openai' &&
-            !endpoint.endsWith('/chat/completions')
-        ) {
+        // ST stores Custom base as .../v1 — direct fetch needs full path
+        if (info.format === 'openai' && !endpoint.endsWith('/chat/completions')) {
             endpoint = endpoint + '/chat/completions';
         }
     }
@@ -96,15 +92,74 @@ function resolveProfileConfig() {
 
 export function isSidecarConfigured() {
     if (_secretKeyFailed) return false;
-    return !!resolveProfileConfig();
+    const settings = getSettings();
+    if (!settings.connectionProfile) return false;
+    // CMRS can work even if resolveProfileConfig is thin; still require a profile
+    return true;
 }
 
 const THINK_RE = /<think[\s\S]*?<\/think>/gi;
 
+/**
+ * Main entry: try ST ConnectionManagerRequestService first (no CORS),
+ * then fall back to direct browser fetch.
+ */
 export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
+    const settings = getSettings();
+    const profileId = settings.connectionProfile;
+    if (!profileId) throw new Error('No Connection Profile selected.');
+
+    // 1) Official ST path (server-side)
+    try {
+        const ctx = getContext();
+        const CMRS = ctx?.ConnectionManagerRequestService
+            || window.ConnectionManagerRequestService
+            || null;
+
+        if (CMRS?.sendRequest) {
+            const messages = [];
+            if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+            messages.push({ role: 'user', content: prompt });
+
+            const result = await CMRS.sendRequest(
+                profileId,
+                messages,
+                settings.maxTokens || 32,
+            );
+
+            if (settings.debugResponse) {
+                console.log('[Expression Router] CMRS raw:', result);
+            }
+
+            const text =
+                (typeof result === 'string' && result) ||
+                result?.content ||
+                result?.message?.content ||
+                result?.choices?.[0]?.message?.content ||
+                result?.extracted?.content ||
+                result?.text ||
+                '';
+
+            if (text) {
+                return String(text).replace(THINK_RE, '').trim();
+            }
+
+            console.warn('[Expression Router] CMRS returned empty text, trying direct fetch');
+        } else {
+            console.warn('[Expression Router] CMRS not available, using direct fetch');
+        }
+    } catch (e) {
+        console.warn('[Expression Router] CMRS failed, falling back to direct fetch:', e);
+    }
+
+    // 2) Direct fetch (works for providers with CORS / native endpoints)
+    return await sidecarGenerateDirect({ prompt, systemPrompt });
+}
+
+async function sidecarGenerateDirect({ prompt, systemPrompt = '' }) {
     const config = resolveProfileConfig();
     if (!config) {
-        throw new Error('No valid Connection Profile selected (needs API + model).');
+        throw new Error('No valid Connection Profile (needs API + model).');
     }
 
     const settings = getSettings();
@@ -122,6 +177,10 @@ export async function sidecarGenerate({ prompt, systemPrompt = '' }) {
         throw new Error(
             `No API key for "${provider}". Add the key in ST API settings and enable allowKeysExposure in config.yaml.`,
         );
+    }
+
+    if (settings.debugPrompt) {
+        console.log('[Expression Router] Direct fetch →', provider, endpoint, model);
     }
 
     let result;
@@ -202,16 +261,24 @@ async function callOpenAI({ endpoint, apiKey, model, systemPrompt, prompt, tempe
     if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
     messages.push({ role: 'user', content: prompt });
 
-    const response = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-            model,
-            messages,
-            temperature,
-            max_tokens: maxTokens,
-        }),
-    });
+    let response;
+    try {
+        response = await fetch(endpoint, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                model,
+                messages,
+                temperature,
+                max_tokens: maxTokens,
+            }),
+        });
+    } catch (err) {
+        throw new Error(
+            `Fetch failed for ${provider} → ${endpoint}. ` +
+            `If this is Custom, ST should use CMRS (server-side). (${err?.message || err})`,
+        );
+    }
 
     if (!response.ok) {
         const err = await response.text().catch(() => '');
@@ -219,35 +286,20 @@ async function callOpenAI({ endpoint, apiKey, model, systemPrompt, prompt, tempe
     }
 
     const data = await response.json();
-
     const message = data.choices?.[0]?.message;
     if (!message) {
-        // Surface useful debug for odd providers (Z.AI, etc.)
-        const preview = JSON.stringify(data).slice(0, 300);
-        throw new Error(`${provider} returned no message. Body: ${preview}`);
+        throw new Error(`${provider} returned no message. Body: ${JSON.stringify(data).slice(0, 300)}`);
     }
 
     let content = message.content;
-
-    // Some models return content as array of parts
     if (Array.isArray(content)) {
-        content = content
-            .map(part => (typeof part === 'string' ? part : part?.text || ''))
-            .join('');
+        content = content.map(part => (typeof part === 'string' ? part : part?.text || '')).join('');
     }
-
-    // Fallback: some Z.AI / reasoning models put text elsewhere
     if (!content || !String(content).trim()) {
-        content =
-            message.reasoning_content ||
-            message.reasoning ||
-            data.choices?.[0]?.text ||
-            '';
+        content = message.reasoning_content || message.reasoning || data.choices?.[0]?.text || '';
     }
-
     if (!content || !String(content).trim()) {
-        const preview = JSON.stringify(message).slice(0, 300);
-        throw new Error(`${provider} empty content. Message: ${preview}`);
+        throw new Error(`${provider} empty content. Message: ${JSON.stringify(message).slice(0, 300)}`);
     }
 
     return String(content);
