@@ -352,7 +352,7 @@ function createUI() {
                 </div>
                 <div class="er_field">
                     <label class="er_field_label">Max tokens</label>
-                    <input id="er_maxtokens" class="er_input" type="number" min="8" max="256" value="${settings.maxTokens}">
+                    <input id="er_maxtokens" class="er_input" type="number" min="8" max="1024" value="${settings.maxTokens}">
                 </div>
             </div>
 
