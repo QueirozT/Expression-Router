@@ -20,7 +20,7 @@ const DEFAULT_SETTINGS = {
     prompt: DEFAULT_PROMPT,
     historyCount: 4,
     temperature: 0,
-    maxTokens: 256,
+    maxTokens: 64,
     debugPrompt: false,
     debugResponse: false,
     suppressClassifier: true,

@@ -238,7 +238,7 @@ function extractCmrsText(result) {
         }
     }
 
-    // Diagnóstico: modelo devolveu só reasoning (disable_reasoning ignorado)
+    // Diagnosis: model returned only reasoning (disable_reasoning ignored)
     const reasoning =
         result.reasoning ||
         result.message?.reasoning ||

@@ -4,7 +4,7 @@ LLM-based sprite expression classifier for SillyTavern.
 
 Uses a **Connection Profile** (API + key already saved in ST) as a sidecar, so classification does not consume the main chat model or its context window.
 
-**Version:** 1.4.0
+**Version:** 1.5.0
 
 ---
 
@@ -29,7 +29,7 @@ Manual set (`/er set <label>`) uses the **same apply path** as classification an
 
 ## Requirements
 
-- SillyTavern with the **Expressions (Sprites)** extension enabled
+- SillyTavern with the Expressions (Sprites) extension enabled and set to [ None ]
 - At least one **Connection Profile** configured (API source + model)
 - `allowKeysExposure: true` in SillyTavern’s `config.yaml` (needed for the direct-fetch path to read the profile’s API key; same as other sidecar extensions)
 - Character sprites present under the character’s sprite folder
@@ -45,9 +45,9 @@ Manual set (`/er set <label>`) uses the **same apply path** as classification an
 | **Connection Profile** | Which saved profile (API + key + model) is used as the sidecar |
 | **Fallback expression** | Label applied when classification returns nothing valid or the call fails. Choose **none** to skip |
 | **History** | How many recent non-system messages are injected via `{{history}}` (default: 4, max: 50) |
-| **Temperature** | Sampling temperature for the sidecar call (`0` is allowed; default: `0`) |
-| **Max tokens** | Max tokens for the sidecar reply (default: 256; keep low, e.g. 16–32 — you only need one label) |
-| **Suppress ST classifier** | Sets ST’s built-in expression API to “None” so it does not overwrite this extension’s picks |
+| **Temperature** | Sampling temperature for the sidecar call (`2` is allowed; default: `0`) |
+| **Max tokens** | Max tokens for the sidecar reply (Default 64: for pure classification, 16–32 usually suffices; verbose models may require more.) |
+| **Suppress ST classifier** | Disables ST's built-in expression API so it does not override this extension's selections (I recommend manually setting it to [ None ] to avoid silent API usage) |
 | **Prompt** | Full classification prompt (editable). Supports wrappers below |
 | **Hide prompt** | Collapses the prompt editor in the UI |
 | **Log prompt / Log response** | Writes expanded prompt and raw model reply to the browser console |
@@ -200,7 +200,7 @@ On `CHARACTER_MESSAGE_RENDERED`, labels are refreshed so newly available sprites
 ## Notes
 
 - Classification runs only when the extension is **Enabled** and a Connection Profile is selected. Manual `/er set` only needs an open chat and valid sprite labels.
-- Keep **Max tokens** small (e.g. 16–32); the expected answer is a single word. The default of 256 works but is wasteful for classification.
+- Keep **Max tokens** small (e.g. 16–32); the expected answer is a single word. The default of 64 works but is wasteful for classification.
 - Custom (non-default) sprite labels should also be registered in ST’s Expressions extension if you want full compatibility with ST’s own UI.
 - This extension does not upload sprites, manage conditionals, or change backgrounds — it only classifies and applies expressions.
 - Concurrent classification calls are ignored (`_classifying` guard) so rapid messages do not stack requests.

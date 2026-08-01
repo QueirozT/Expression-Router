@@ -59,26 +59,47 @@ function setChatExpressionMeta(expression) {
     }
 }
 
+const EXPRESSION_API_NONE = 99;
+
 function suppressClassifier() {
     const settings = getSettings();
     if (!settings.suppressClassifier) return;
     if (!extension_settings.expressions) return;
 
-    if (!settings._classifierSnapshot) {
-        settings._classifierSnapshot = {
-            api: extension_settings.expressions.api ?? null,
-        };
+    const current = extension_settings.expressions.api;
+
+    // Snapshot only when leaving a non-None value
+    if (current !== EXPRESSION_API_NONE && settings._classifierSnapshot == null) {
+        settings._classifierSnapshot = { api: current ?? null };
+    }
+
+    if (current !== EXPRESSION_API_NONE) {
+        extension_settings.expressions.api = EXPRESSION_API_NONE;
         saveSettingsDebounced();
     }
-    extension_settings.expressions.api = 99;
+
+    // Keep Expressions UI in sync
+    const $api = $('#expression_api');
+    if ($api.length && String($api.val()) !== String(EXPRESSION_API_NONE)) {
+        $api.val(String(EXPRESSION_API_NONE));
+    }
 }
 
 function restoreClassifier() {
     const settings = getSettings();
-    if (!settings._classifierSnapshot || !extension_settings.expressions) return;
-    extension_settings.expressions.api = settings._classifierSnapshot.api;
+    if (!extension_settings.expressions) return;
+
+    const snap = settings._classifierSnapshot;
+    if (!snap) return;
+
+    extension_settings.expressions.api = snap.api;
     settings._classifierSnapshot = null;
     saveSettingsDebounced();
+
+    const $api = $('#expression_api');
+    if ($api.length && snap.api != null) {
+        $api.val(String(snap.api));
+    }
 }
 
 // ─── Apply expression ────────────────────────────────────────────
@@ -180,7 +201,7 @@ function registerSlashCommands() {
             name: 'er',
             aliases: ['expression-router', 'Expression-Router'],
             callback: async (args, value) => {
-                // value costuma ser a string inteira após o comando, ex.: "set joy"
+                // value it is usually an entire string following the command, ex.: "set joy"
                 const full = String(value || args?.action || '').trim();
                 const parts = full.split(/\s+/).filter(Boolean);
                 const action = (parts[0] || '').toLowerCase();
@@ -207,13 +228,11 @@ function registerSlashCommands() {
                 }
 
                 if (action === 'set' || action === 'apply') {
-                    // Prioridade: named arg → resto após "set" → pipe/value puro
+                    
                     let label = String(
                         args?.label || args?.expression || rest || '',
                     ).trim();
 
-                    // Se o usuário usou pipe sem "set" no value (ex.: /er set | via pipe
-                    // em alguns fluxos o value já vem só com o label)
                     if (!label && typeof value === 'string') {
                         const v = value.trim();
                         if (v && !/^(set|apply)\b/i.test(v)) {
@@ -236,7 +255,6 @@ function registerSlashCommands() {
                         return '';
                     }
 
-                    // Mesmo caminho de apply da classificação / escolha de sprite
                     await applyExpression(match);
                     setStatus(`Set: ${match}`, 'ok');
                     toastr.success(`Expression set: ${match}`, MODULE);
@@ -626,6 +644,10 @@ jQuery(async () => {
         await refreshFallbackOptions();
         refreshProfiles();
         updateControlsState();
+        
+        if (getSettings().enabled && getSettings().suppressClassifier) {
+            suppressClassifier();
+        }
 
         // No character / chat closed → do nothing
         const ctx = getContext();
