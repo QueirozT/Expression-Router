@@ -462,7 +462,7 @@ function bindEvents() {
     });
 
     panel.find('#er_maxtokens').on('change', function () {
-        const v = Math.max(8, Math.min(256, Number(this.value) || 32));
+        const v = Math.max(8, Math.min(1024, Number(this.value) || 32));
         this.value = v;
         updateSetting('maxTokens', v);
     });
