@@ -46,7 +46,7 @@ Manual set (`/er set <label>`) uses the **same apply path** as classification an
 | **Fallback expression** | Label applied when classification returns nothing valid or the call fails. Choose **none** to skip |
 | **History** | How many recent non-system messages are injected via `{{history}}` (default: 4, max: 50) |
 | **Temperature** | Sampling temperature for the sidecar call (`2` is allowed; default: `0`) |
-| **Max tokens** | Cap on the sidecar *reply* length (default: 64). For a single label, 16–32 is usually enough. Models that emit long chain-of-thought / reasoning before the answer (e.g. some Cerebras GLM builds) may need 512–1024 so the final label is not cut off. |
+| **Max tokens** | Cap on the sidecar *reply* length (default: 64). For a single label, 16–32 is usually enough. |
 | **Suppress ST classifier** | Disables ST's built-in expression API so it does not override this extension's selections (I recommend manually setting it to [ None ] to avoid silent API usage) |
 | **Prompt** | Full classification prompt (editable). Supports wrappers below |
 | **Hide prompt** | Collapses the prompt editor in the UI |
@@ -200,7 +200,7 @@ On `CHARACTER_MESSAGE_RENDERED`, labels are refreshed so newly available sprites
 ## Notes
 
 - Classification runs only when the extension is **Enabled** and a Connection Profile is selected. Manual `/er set` only needs an open chat and valid sprite labels.
-- Keep **Max tokens** small (e.g. 16–32); the expected answer is a single word. The default of 64 works but is wasteful for classification.
+- Keep **Max tokens** small when the model answers with a single label (16–32 is typical; the default of 64 is already a safe margin). Models that emit long chain-of-thought / reasoning before the answer (e.g. some Cerebras GLM builds) may need **512–1024** so the final label is not cut off.
 - Custom (non-default) sprite labels should also be registered in ST’s Expressions extension if you want full compatibility with ST’s own UI.
 - This extension does not upload sprites, manage conditionals, or change backgrounds — it only classifies and applies expressions.
 - Concurrent classification calls are ignored (`_classifying` guard) so rapid messages do not stack requests.
