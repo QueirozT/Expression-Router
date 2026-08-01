@@ -46,7 +46,7 @@ Manual set (`/er set <label>`) uses the **same apply path** as classification an
 | **Fallback expression** | Label applied when classification returns nothing valid or the call fails. Choose **none** to skip |
 | **History** | How many recent non-system messages are injected via `{{history}}` (default: 4, max: 50) |
 | **Temperature** | Sampling temperature for the sidecar call (`2` is allowed; default: `0`) |
-| **Max tokens** | Max tokens for the sidecar reply (Default 64: for pure classification, 16–32 usually suffices; verbose models may require more.) |
+| **Max tokens** | Cap on the sidecar *reply* length (default: 64). For a single label, 16–32 is usually enough. Models that emit long chain-of-thought / reasoning before the answer (e.g. some Cerebras GLM builds) may need 512–1024 so the final label is not cut off. |
 | **Suppress ST classifier** | Disables ST's built-in expression API so it does not override this extension's selections (I recommend manually setting it to [ None ] to avoid silent API usage) |
 | **Prompt** | Full classification prompt (editable). Supports wrappers below |
 | **Hide prompt** | Collapses the prompt editor in the UI |
