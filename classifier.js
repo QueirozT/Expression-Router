@@ -15,6 +15,12 @@ export async function classifyExpression() {
     }
 
     await getAvailableLabels();
+    
+    const labels = window.expressionRouterLabels || [];
+    if (!labels.length) {
+        // No sprites → never hit the API
+        return null;
+    }
 
     let prompt = await expandWrappers(settings.prompt || '');
 
@@ -49,7 +55,6 @@ export async function classifyExpression() {
         throw new Error('Model returned an empty response.');
     }
 
-    const labels = window.expressionRouterLabels || [];
     const parsed = parseResponse(raw);
 
     if (parsed) {

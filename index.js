@@ -135,6 +135,16 @@ async function runClassification({ silent = false } = {}) {
         return null;
     }
     
+    const labels = await getAvailableLabels(true);
+    if (!labels.length) {
+        if (!silent) {
+            toastr.warning('No sprite labels for this character.', MODULE);
+            setStatus('No labels', 'error');
+            showOutput('No sprites found for current character.');
+        }
+        return null;
+    }
+    
     if (_classifying) return null;
 
     _classifying = true;
@@ -214,6 +224,9 @@ function registerSlashCommands() {
 
                 if (action === 'labels' || action === 'list') {
                     const labels = await getAvailableLabels(true);
+                    if (!labels.length) {
+                        toastr.warning('No sprite labels for this character.', MODULE);
+                    }
                     return JSON.stringify(labels);
                 }
 
@@ -246,6 +259,11 @@ function registerSlashCommands() {
                     }
 
                     const labels = await getAvailableLabels(true);
+                    if (!labels.length) {
+                        toastr.warning('No sprite labels for this character.', MODULE);
+                        return '';
+                    }
+                    
                     const match =
                         labels.find(l => l === label) ||
                         labels.find(l => l.toLowerCase() === label.toLowerCase());
@@ -519,8 +537,8 @@ function bindEvents() {
                 throw new Error('API key access denied. Enable allowKeysExposure in config.yaml.');
             }
             const expression = await runClassification({ silent: false });
-            showOutput(expression || '(no valid expression)');
             if (expression) {
+                showOutput(expression);
                 toastr.success(`Selected: ${expression}`, MODULE);
             }
         } catch (e) {
@@ -607,15 +625,19 @@ async function refreshFallbackOptions() {
     select.empty();
     select.append($('<option>').val('').text('— none —'));
 
-    const list = labels.length ? labels : ['neutral'];
-    for (const label of list) {
+    if (!labels.length) {
+        select.val('');
+        return;
+    }
+
+    for (const label of labels) {
         select.append($('<option>').val(label).text(label));
     }
 
-    if (list.includes(current) || current === '') {
+    if (labels.includes(current) || current === '') {
         select.val(current);
     } else {
-        select.val(list.includes('neutral') ? 'neutral' : '');
+        select.val(labels.includes('neutral') ? 'neutral' : '');
     }
 }
 
@@ -653,6 +675,11 @@ jQuery(async () => {
         const ctx = getContext();
         if (!ctx?.name2 || ctx.characterId === undefined || ctx.characterId === null) {
             return;
+        }
+        
+        const labels = await getAvailableLabels(false);
+        if (!labels.length) {
+            return; // no sprites → don't restore/fallback
         }
 
         // Restore last expression saved for this chat
