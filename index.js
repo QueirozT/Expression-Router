@@ -383,14 +383,6 @@ function createUI() {
                     <span>Enabled</span>
                 </label>
             </div>
-            
-            <div class="er_row">
-                <label class="er_toggle">
-                    <input id="er_hold_hide" type="checkbox" ${settings.holdToHideChat ? 'checked' : ''}>
-                    <span class="er_toggle_slider"></span>
-                    <span>Hold sprite to hide chat</span>
-                </label>
-            </div>
 
             <div class="er_row">
                 <label class="er_field_label">Connection Profile</label>
@@ -422,6 +414,14 @@ function createUI() {
                     <input id="er_suppress" type="checkbox" ${settings.suppressClassifier ? 'checked' : ''}>
                     <span class="er_toggle_slider"></span>
                     <span>Suppress ST classifier</span>
+                </label>
+            </div>
+            
+            <div class="er_row">
+                <label class="er_toggle">
+                    <input id="er_hold_hide" type="checkbox" ${settings.holdToHideChat ? 'checked' : ''}>
+                    <span class="er_toggle_slider"></span>
+                    <span>Hold sprite to hide chat</span>
                 </label>
             </div>
         </div>
