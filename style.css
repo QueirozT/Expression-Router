@@ -373,6 +373,19 @@ body.er-hold-hide-chat.waifuMode:has(img.expression:active) #expression-holder {
     filter: brightness(1.05);
 }
 
+/* Impede o menu de contexto / “Salvar imagem” no mobile ao segurar a sprite */
+body.er-hold-hide-chat.waifuMode #expression-holder,
+body.er-hold-hide-chat.waifuMode .expression-holder,
+body.er-hold-hide-chat.waifuMode #expression-image,
+body.er-hold-hide-chat.waifuMode img.expression,
+body.er-hold-hide-chat.waifuMode #expression-wrapper {
+    -webkit-touch-callout: none !important;   /* iOS Safari */
+    -webkit-user-select: none !important;
+    user-select: none !important;
+    -webkit-user-drag: none !important;
+    user-drag: none !important;
+}
+
 @media (max-width: 520px) {
     .er_row_grid {
         grid-template-columns: 1fr;

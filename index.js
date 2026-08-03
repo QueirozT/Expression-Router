@@ -327,6 +327,33 @@ function applyHoldToHideChat(enabled) {
 
 function syncHoldToHideChat() {
     applyHoldToHideChat(getSettings().holdToHideChat);
+    bindHoldHidePrevention();
+}
+
+function bindHoldHidePrevention() {
+    // Remove listeners antigos se existirem
+    $(document).off('.erHoldHide');
+
+    if (!getSettings().holdToHideChat) return;
+
+    const selector = '#expression-holder, .expression-holder, #expression-image, img.expression, #expression-wrapper';
+
+    // Bloqueia o menu de contexto (desktop e mobile)
+    $(document).on('contextmenu.erHoldHide', selector, function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+    });
+
+    // No mobile, evita que o long-press dispare o menu nativo
+    $(document).on('touchstart.erHoldHide', selector, function (e) {
+        // não faz preventDefault aqui para não quebrar o :active
+        // só marca que estamos segurando
+    });
+
+    $(document).on('touchend.erHoldHide touchcancel.erHoldHide', selector, function () {
+        // limpeza se necessário
+    });
 }
 
 function createUI() {
@@ -464,6 +491,7 @@ function bindEvents() {
     panel.find('#er_hold_hide').on('change', function () {
         updateSetting('holdToHideChat', this.checked);
         applyHoldToHideChat(this.checked);
+        bindHoldHidePrevention();
         setStatus(this.checked ? 'Hold-to-hide enabled' : 'Hold-to-hide disabled', 'ok');
     });
 
