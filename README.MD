@@ -4,7 +4,7 @@ LLM-based sprite expression classifier for SillyTavern.
 
 Uses a **Connection Profile** (API + key already saved in ST) as a sidecar, so classification does not consume the main chat model or its context window.
 
-**Version:** 1.5.0
+**Version:** 1.6.0
 
 ---
 
@@ -25,6 +25,15 @@ On chat switch, the last expression saved for that chat is restored when possibl
 
 Manual set (`/er set <label>`) uses the **same apply path** as classification and as picking a sprite: `sendExpressionCall` with `force: true`, updates ST’s fallback expression, chat metadata, and `{{expression}}`.
 
+
+### Hold sprite to hide chat
+
+Optional pure-CSS feature (Waifu / Visual Novel mode only).
+
+When enabled, **press and hold** the character sprite (mouse or touch) to temporarily hide the chat panel (`#sheld`). Release to show it again. Useful for inspecting the sprite without the text box covering it.
+
+Works the same on desktop and mobile. No MovingUI required.
+
 ---
 
 ## Requirements
@@ -42,6 +51,7 @@ Manual set (`/er set <label>`) uses the **same apply path** as classification an
 | Setting | Description |
 |--------|-------------|
 | **Enabled** | Turns automatic classification on/off |
+| **Hold sprite to hide chat** | Hold the sprite (mouse/touch) to temporarily hide the chat panel. Waifu/VN mode only |
 | **Connection Profile** | Which saved profile (API + key + model) is used as the sidecar |
 | **Fallback expression** | Label applied when classification returns nothing valid or the call fails. Choose **none** to skip |
 | **History** | How many recent non-system messages are injected via `{{history}}` (default: 4, max: 50) |
@@ -190,6 +200,7 @@ On `CHAT_CHANGED`:
 - Label cache is cleared and rebuilt for the new character
 - `{{expression}}` is reset
 - Profile list, label preview, fallback options, and control availability are refreshed
+- Hold-to-hide class is re-synced from settings
 - If this chat previously had an expression saved in metadata, it is **restored** (no LLM call)
 - Otherwise, if a fallback expression is configured, that label is applied once
 
@@ -200,6 +211,7 @@ On `CHARACTER_MESSAGE_RENDERED`, labels are refreshed so newly available sprites
 ## Notes
 
 - Classification runs only when the extension is **Enabled** and a Connection Profile is selected. Manual `/er set` only needs an open chat and valid sprite labels.
+- **Hold sprite to hide chat** only affects Waifu / Visual Novel mode. It uses pure CSS (`:active` + `:has()`) and requires no MovingUI.
 - Keep **Max tokens** small when the model answers with a single label (16–32 is typical; the default of 64 is already a safe margin). Models that emit long chain-of-thought / reasoning before the answer (e.g. some Cerebras GLM builds) may need **512–1024** so the final label is not cut off.
 - Custom (non-default) sprite labels should also be registered in ST’s Expressions extension if you want full compatibility with ST’s own UI.
 - This extension does not upload sprites, manage conditionals, or change backgrounds — it only classifies and applies expressions.

@@ -343,6 +343,36 @@
     display: none !important;
 }
 
+/* ============================================
+   Hold sprite to hide chat (#sheld)
+   Ativado via classe no <body>
+   ============================================ */
+
+body.er-hold-hide-chat.waifuMode #sheld {
+    transition: opacity 0.25s ease, visibility 0.25s ease !important;
+}
+
+body.er-hold-hide-chat.waifuMode:has(#expression-holder:active) #sheld,
+body.er-hold-hide-chat.waifuMode:has(.expression-holder:active) #sheld,
+body.er-hold-hide-chat.waifuMode:has(#expression-image:active) #sheld,
+body.er-hold-hide-chat.waifuMode:has(#expression-wrapper:active) #sheld,
+body.er-hold-hide-chat.waifuMode:has(img.expression:active) #sheld {
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+
+/* Feedback visual na sprite enquanto segura */
+body.er-hold-hide-chat.waifuMode:has(#expression-holder:active) #expression-holder,
+body.er-hold-hide-chat.waifuMode:has(.expression-holder:active) .expression-holder,
+body.er-hold-hide-chat.waifuMode:has(#expression-image:active) #expression-holder,
+body.er-hold-hide-chat.waifuMode:has(img.expression:active) #expression-holder {
+    transform: scale(1.03);
+    transition: transform 0.2s ease;
+    z-index: 50 !important;
+    filter: brightness(1.05);
+}
+
 @media (max-width: 520px) {
     .er_row_grid {
         grid-template-columns: 1fr;

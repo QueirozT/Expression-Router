@@ -27,6 +27,7 @@ const DEFAULT_SETTINGS = {
     uiCollapsed: false,
     hidePrompt: false,
     fallbackExpression: 'neutral',
+    holdToHideChat: false,
 };
 
 export function getSettings() {

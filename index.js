@@ -321,6 +321,14 @@ function escapeHtml(text) {
         .replaceAll("'", '&#039;');
 }
 
+function applyHoldToHideChat(enabled) {
+    document.body.classList.toggle('er-hold-hide-chat', !!enabled);
+}
+
+function syncHoldToHideChat() {
+    applyHoldToHideChat(getSettings().holdToHideChat);
+}
+
 function createUI() {
     const settings = getSettings();
     const collapsed = !!settings.uiCollapsed;
@@ -334,7 +342,7 @@ function createUI() {
             <span class="er_header_title">Expression Router</span>
             <span class="er_header_sub">Sidecar expression classifier</span>
         </div>
-        <span class="er_badge">v1.5</span>
+        <span class="er_badge">v1.6</span>
         <i class="fa-solid fa-chevron-down er_chevron ${collapsed ? '' : 'expanded'}"></i>
     </div>
 
@@ -346,6 +354,14 @@ function createUI() {
                     <input id="er_enabled" type="checkbox" ${settings.enabled ? 'checked' : ''}>
                     <span class="er_toggle_slider"></span>
                     <span>Enabled</span>
+                </label>
+            </div>
+            
+            <div class="er_row">
+                <label class="er_toggle">
+                    <input id="er_hold_hide" type="checkbox" ${settings.holdToHideChat ? 'checked' : ''}>
+                    <span class="er_toggle_slider"></span>
+                    <span>Hold sprite to hide chat</span>
                 </label>
             </div>
 
@@ -443,6 +459,12 @@ function bindEvents() {
         body.slideToggle(180);
         chevron.toggleClass('expanded', isHidden);
         updateSetting('uiCollapsed', !isHidden);
+    });
+    
+    panel.find('#er_hold_hide').on('change', function () {
+        updateSetting('holdToHideChat', this.checked);
+        applyHoldToHideChat(this.checked);
+        setStatus(this.checked ? 'Hold-to-hide enabled' : 'Hold-to-hide disabled', 'ok');
     });
 
     panel.find('#er_enabled').on('change', function () {
@@ -650,6 +672,7 @@ jQuery(async () => {
     if (s.hidePrompt === undefined) s.hidePrompt = false;
 
     createUI();
+    syncHoldToHideChat();
     registerSlashCommands();
 
     if (getSettings().enabled) {
@@ -666,6 +689,7 @@ jQuery(async () => {
         await refreshFallbackOptions();
         refreshProfiles();
         updateControlsState();
+        syncHoldToHideChat();
         
         if (getSettings().enabled && getSettings().suppressClassifier) {
             suppressClassifier();
