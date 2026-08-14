@@ -27,11 +27,85 @@ import { setLastExpression, getLastExpression } from './wrappers.js';
 import { isSidecarConfigured, isSidecarKeyAvailable } from './llm-sidecar.js';
 
 const MODULE = 'Expression Router';
+const EXPR_KEY = 'expression_router';
 
 let panel = null;
 let _classifying = false;
 
-// ─── Classifier suppression ──────────────────────────────────────
+// ─── Per-message / per-swipe expression storage ─────────────────
+
+function ensureMesExtra(mes) {
+    if (!mes.extra || typeof mes.extra !== 'object') mes.extra = {};
+    return mes.extra;
+}
+
+function ensureSwipeInfoExtra(mes, swipeId) {
+    if (!Array.isArray(mes.swipe_info)) mes.swipe_info = [];
+    if (!mes.swipe_info[swipeId] || typeof mes.swipe_info[swipeId] !== 'object') {
+        mes.swipe_info[swipeId] = {};
+    }
+    if (!mes.swipe_info[swipeId].extra || typeof mes.swipe_info[swipeId].extra !== 'object') {
+        mes.swipe_info[swipeId].extra = {};
+    }
+    return mes.swipe_info[swipeId].extra;
+}
+
+/** Expression saved on this message (current swipe). */
+function getMessageExpression(mes) {
+    if (!mes) return '';
+    const fromExtra = mes.extra?.[EXPR_KEY];
+    if (typeof fromExtra === 'string' && fromExtra) return fromExtra;
+    const sid = typeof mes.swipe_id === 'number' ? mes.swipe_id : 0;
+    const fromSwipe = mes.swipe_info?.[sid]?.extra?.[EXPR_KEY];
+    if (typeof fromSwipe === 'string' && fromSwipe) return fromSwipe;
+    return '';
+}
+
+/**
+ * Write expression onto the message + current swipe.
+ * Also keeps chat-level meta for quick restore / older chats.
+ */
+function setMessageExpression(mesId, expression) {
+    const ctx = getContext();
+    const chat = ctx.chat;
+    if (!chat || mesId == null || mesId < 0 || mesId >= chat.length) return;
+
+    const mes = chat[mesId];
+    if (!mes || mes.is_user || mes.is_system) return;
+
+    const label = expression || '';
+    ensureMesExtra(mes)[EXPR_KEY] = label;
+
+    const sid = typeof mes.swipe_id === 'number' ? mes.swipe_id : 0;
+    ensureSwipeInfoExtra(mes, sid)[EXPR_KEY] = label;
+
+    // Compat: last known for this chat
+    const meta = ctx.chatMetadata || ctx.chat_metadata;
+    if (meta) {
+        meta.expression_router = { expression: label, updatedAt: Date.now() };
+        try {
+            if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
+        } catch (e) {
+            console.warn(`[${MODULE}] Could not save chat metadata:`, e);
+        }
+    }
+
+    try {
+        if (typeof ctx.saveChat === 'function') ctx.saveChat();
+        else if (typeof ctx.saveChatDebounced === 'function') ctx.saveChatDebounced();
+    } catch (e) {
+        console.warn(`[${MODULE}] Could not save chat:`, e);
+    }
+}
+
+function findLastCharacterMesId() {
+    const chat = getContext().chat || [];
+    for (let i = chat.length - 1; i >= 0; i--) {
+        const m = chat[i];
+        if (m && !m.is_user && !m.is_system) return i;
+    }
+    return -1;
+}
 
 function getChatExpressionMeta() {
     const ctx = getContext();
@@ -39,25 +113,7 @@ function getChatExpressionMeta() {
     return meta.expression_router || null;
 }
 
-function setChatExpressionMeta(expression) {
-    const ctx = getContext();
-    const meta = ctx.chatMetadata || ctx.chat_metadata;
-    if (!meta) return;
-
-    meta.expression_router = {
-        expression: expression || '',
-        updatedAt: Date.now(),
-    };
-
-    try {
-        // Prefer context helper when available (no hard import)
-        if (typeof ctx.saveMetadata === 'function') {
-            ctx.saveMetadata();
-        }
-    } catch (e) {
-        console.warn(`[${MODULE}] Could not save chat metadata:`, e);
-    }
-}
+// ─── Classifier suppression ──────────────────────────────────────
 
 const EXPRESSION_API_NONE = 99;
 
@@ -68,7 +124,6 @@ function suppressClassifier() {
 
     const current = extension_settings.expressions.api;
 
-    // Snapshot only when leaving a non-None value
     if (current !== EXPRESSION_API_NONE && settings._classifierSnapshot == null) {
         settings._classifierSnapshot = { api: current ?? null };
     }
@@ -78,7 +133,6 @@ function suppressClassifier() {
         saveSettingsDebounced();
     }
 
-    // Keep Expressions UI in sync
     const $api = $('#expression_api');
     if ($api.length && String($api.val()) !== String(EXPRESSION_API_NONE)) {
         $api.val(String(EXPRESSION_API_NONE));
@@ -104,7 +158,7 @@ function restoreClassifier() {
 
 // ─── Apply expression ────────────────────────────────────────────
 
-async function applyExpression(expression) {
+async function applyExpression(expression, mesId = null) {
     const folder = getSpriteFolderName();
     if (!folder || !expression) return;
 
@@ -114,7 +168,20 @@ async function applyExpression(expression) {
             extension_settings.expressions.fallback_expression = expression;
         }
         setLastExpression(expression);
-        setChatExpressionMeta(expression);
+
+        const id = mesId != null ? mesId : findLastCharacterMesId();
+        if (id >= 0) {
+            setMessageExpression(id, expression);
+        } else {
+            const ctx = getContext();
+            const meta = ctx.chatMetadata || ctx.chat_metadata;
+            if (meta) {
+                meta.expression_router = { expression, updatedAt: Date.now() };
+                try {
+                    if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
+                } catch { /* ignore */ }
+            }
+        }
     } catch (e) {
         console.error(`[${MODULE}] applyExpression failed:`, e);
         throw e;
@@ -123,18 +190,18 @@ async function applyExpression(expression) {
 
 // ─── Classification ──────────────────────────────────────────────
 
-async function runClassification({ silent = false } = {}) {
+async function runClassification({ silent = false, mesId = null } = {}) {
     const settings = getSettings();
     if (!settings.enabled) {
         if (!silent) toastr.warning('Expression Router is disabled.', MODULE);
         return null;
     }
-    
+
     const ctx = getContext();
     if (!ctx?.name2 || ctx.characterId === undefined || ctx.characterId === null) {
         return null;
     }
-    
+
     const labels = await getAvailableLabels(true);
     if (!labels.length) {
         if (!silent) {
@@ -144,27 +211,23 @@ async function runClassification({ silent = false } = {}) {
         }
         return null;
     }
-    
+
     if (_classifying) return null;
 
     _classifying = true;
     try {
         const expression = await classifyExpression();
         if (expression) {
-            await applyExpression(expression);
+            await applyExpression(expression, mesId);
             setStatus(`Selected: ${expression}`, 'ok');
-            if (!silent) {
-                // only UI buttons pass silent:false and may toast success themselves
-            }
             return expression;
         }
 
         const fallback = settings.fallbackExpression;
         if (fallback) {
-            await applyExpression(fallback);
+            await applyExpression(fallback, mesId);
             setStatus(`Fallback: ${fallback}`, 'waiting');
             showOutput(`No valid expression from model — applied fallback: ${fallback}`);
-            // Always notify when model failed to produce a valid label
             toastr.warning(`No valid expression — fallback: ${fallback}`, MODULE);
             return fallback;
         }
@@ -177,14 +240,13 @@ async function runClassification({ silent = false } = {}) {
         const msg = e?.message || String(e);
         setStatus(msg, 'error');
         showOutput(msg);
-        // Always toast errors (auto, slash, or UI)
         toastr.error(msg, MODULE);
         console.error(`[${MODULE}]`, e);
 
         const fallback = getSettings().fallbackExpression;
         if (fallback) {
             try {
-                await applyExpression(fallback);
+                await applyExpression(fallback, mesId);
                 setStatus(`Error — fallback: ${fallback}`, 'waiting');
                 showOutput(`${msg}\n\nApplied fallback: ${fallback}`);
                 toastr.warning(`Applied fallback: ${fallback}`, MODULE);
@@ -199,8 +261,40 @@ async function runClassification({ silent = false } = {}) {
     }
 }
 
-async function onMessageReceived() {
-    await runClassification({ silent: true });
+async function onMessageReceived(mesId) {
+    const ctx = getContext();
+    const chat = ctx.chat || [];
+    const id = typeof mesId === 'number' ? mesId : findLastCharacterMesId();
+    const mes = id >= 0 ? chat[id] : null;
+
+    // Already has a sprite for this message/swipe → restore only, no LLM
+    if (mes && getMessageExpression(mes)) {
+        const saved = getMessageExpression(mes);
+        try {
+            await applyExpression(saved, id);
+            setStatus(`Restored: ${saved}`, 'ok');
+        } catch { /* ignore */ }
+        return;
+    }
+
+    await runClassification({ silent: true, mesId: id >= 0 ? id : null });
+}
+
+async function onMessageSwiped(mesId) {
+    const ctx = getContext();
+    const mes = ctx.chat?.[mesId];
+    if (!mes || mes.is_user || mes.is_system) return;
+
+    // ST already swapped mes.extra from swipe_info for this swipe
+    const saved = getMessageExpression(mes);
+    if (!saved) return;
+
+    try {
+        await applyExpression(saved, mesId);
+        setStatus(`Swipe: ${saved}`, 'ok');
+    } catch (e) {
+        console.warn(`[${MODULE}] Swipe restore failed:`, e);
+    }
 }
 
 // ─── Slash commands ──────────────────────────────────────────────
@@ -211,7 +305,6 @@ function registerSlashCommands() {
             name: 'er',
             aliases: ['expression-router', 'Expression-Router'],
             callback: async (args, value) => {
-                // value it is usually an entire string following the command, ex.: "set joy"
                 const full = String(value || args?.action || '').trim();
                 const parts = full.split(/\s+/).filter(Boolean);
                 const action = (parts[0] || '').toLowerCase();
@@ -241,7 +334,6 @@ function registerSlashCommands() {
                 }
 
                 if (action === 'set' || action === 'apply') {
-                    
                     let label = String(
                         args?.label || args?.expression || rest || '',
                     ).trim();
@@ -263,7 +355,7 @@ function registerSlashCommands() {
                         toastr.warning('No sprite labels for this character.', MODULE);
                         return '';
                     }
-                    
+
                     const match =
                         labels.find(l => l === label) ||
                         labels.find(l => l.toLowerCase() === label.toLowerCase());
@@ -331,28 +423,24 @@ function syncHoldToHideChat() {
 }
 
 function bindHoldHidePrevention() {
-    // Remove listeners antigos se existirem
     $(document).off('.erHoldHide');
 
     if (!getSettings().holdToHideChat) return;
 
     const selector = '#expression-holder, .expression-holder, #expression-image, img.expression, #expression-wrapper';
 
-    // Bloqueia o menu de contexto (desktop e mobile)
     $(document).on('contextmenu.erHoldHide', selector, function (e) {
         e.preventDefault();
         e.stopPropagation();
         return false;
     });
 
-    // No mobile, evita que o long-press dispare o menu nativo
-    $(document).on('touchstart.erHoldHide', selector, function (e) {
-        // não faz preventDefault aqui para não quebrar o :active
-        // só marca que estamos segurando
+    $(document).on('touchstart.erHoldHide', selector, function () {
+        // no preventDefault — keep :active working
     });
 
     $(document).on('touchend.erHoldHide touchcancel.erHoldHide', selector, function () {
-        // limpeza se necessário
+        // cleanup if needed
     });
 }
 
@@ -478,7 +566,6 @@ function createUI() {
 }
 
 function bindEvents() {
-    // Collapse header
     panel.find('#er_header_toggle').on('click', function () {
         const body = panel.find('.er_body');
         const chevron = panel.find('.er_chevron');
@@ -487,7 +574,7 @@ function bindEvents() {
         chevron.toggleClass('expanded', isHidden);
         updateSetting('uiCollapsed', !isHidden);
     });
-    
+
     panel.find('#er_hold_hide').on('change', function () {
         updateSetting('holdToHideChat', this.checked);
         applyHoldToHideChat(this.checked);
@@ -598,7 +685,7 @@ function bindEvents() {
             toastr.error(msg, MODULE);
         }
     });
-    
+
     panel.find('#er_fallback').on('change', function () {
         updateSetting('fallbackExpression', this.value || '');
         setStatus(this.value ? `Fallback: ${this.value}` : 'No fallback', 'ok');
@@ -694,7 +781,6 @@ async function refreshFallbackOptions() {
 // ─── Init ────────────────────────────────────────────────────────
 
 jQuery(async () => {
-    // ensure new settings keys exist
     const s = getSettings();
     if (s.uiCollapsed === undefined) s.uiCollapsed = false;
     if (s.hidePrompt === undefined) s.hidePrompt = false;
@@ -708,6 +794,7 @@ jQuery(async () => {
     }
 
     eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
+    eventSource.on(event_types.MESSAGE_SWIPED, onMessageSwiped);
 
     eventSource.on(event_types.CHAT_CHANGED, async () => {
         clearSpriteCache();
@@ -718,27 +805,36 @@ jQuery(async () => {
         refreshProfiles();
         updateControlsState();
         syncHoldToHideChat();
-        
+
         if (getSettings().enabled && getSettings().suppressClassifier) {
             suppressClassifier();
         }
 
-        // No character / chat closed → do nothing
         const ctx = getContext();
         if (!ctx?.name2 || ctx.characterId === undefined || ctx.characterId === null) {
             return;
         }
-        
+
         const labels = await getAvailableLabels(false);
         if (!labels.length) {
-            return; // no sprites → don't restore/fallback
+            return;
         }
 
-        // Restore last expression saved for this chat
-        const saved = getChatExpressionMeta()?.expression;
+        const lastId = findLastCharacterMesId();
+        const chat = ctx.chat || [];
+        const lastMes = lastId >= 0 ? chat[lastId] : null;
+
+        // 1) per-message / current swipe
+        let saved = lastMes ? getMessageExpression(lastMes) : '';
+
+        // 2) legacy chat-level meta
+        if (!saved) {
+            saved = getChatExpressionMeta()?.expression || '';
+        }
+
         if (saved) {
             try {
-                await applyExpression(saved);
+                await applyExpression(saved, lastId >= 0 ? lastId : null);
                 setStatus(`Restored: ${saved}`, 'ok');
                 return;
             } catch (e) {
@@ -746,11 +842,11 @@ jQuery(async () => {
             }
         }
 
-        // No saved expression: optional fallback only (no LLM call on open)
+        // 3) fallback only — and persist onto the message so reopen won't re-classify
         const fallback = getSettings().fallbackExpression;
         if (fallback) {
             try {
-                await applyExpression(fallback);
+                await applyExpression(fallback, lastId >= 0 ? lastId : null);
                 setStatus(`Fallback: ${fallback}`, 'waiting');
             } catch { /* ignore */ }
         }
