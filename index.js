@@ -262,21 +262,7 @@ async function runClassification({ silent = false, mesId = null } = {}) {
 }
 
 async function onMessageReceived(mesId) {
-    const ctx = getContext();
-    const chat = ctx.chat || [];
     const id = typeof mesId === 'number' ? mesId : findLastCharacterMesId();
-    const mes = id >= 0 ? chat[id] : null;
-
-    // Already has a sprite for this message/swipe → restore only, no LLM
-    if (mes && getMessageExpression(mes)) {
-        const saved = getMessageExpression(mes);
-        try {
-            await applyExpression(saved, id);
-            setStatus(`Restored: ${saved}`, 'ok');
-        } catch { /* ignore */ }
-        return;
-    }
-
     await runClassification({ silent: true, mesId: id >= 0 ? id : null });
 }
 
